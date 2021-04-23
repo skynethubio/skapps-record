@@ -1,7 +1,7 @@
 import { Buffer } from "buffer"
 import { SkynetClient, MySky, JsonData } from "skynet-js";
 import { ChildHandshake, Connection, WindowMessenger } from "post-me";
-import { IContentInfo, IIndex, IPage, IContentPersistence, INewContentPersistence, EntryType, IDACResponse, IDictionary, IContentRecordDAC, IFilePaths } from "./types";
+import { IContentInfo, skappActionType, IPublishedApp, IIndex, IPage, IContentPersistence, INewContentPersistence, EntryType, IDACResponse, IDictionary, IContentRecordDAC, IFilePaths, IAppComments, IAppInfo, IAppStats, IDeployedApp } from "./types";
 
 // DAC consts
 const DATA_DOMAIN = "skapps.hns";
@@ -32,7 +32,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
   private mySky: MySky;
   private paths: IFilePaths;
   private skapp: string;
-
+  private skappDict : any={};
   public constructor(
   ) {
     // create client
@@ -42,8 +42,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     const methods = {
       init: this.init.bind(this),
       onUserLogin: this.onUserLogin.bind(this),
-      recordNewContent: this.recordNewContent.bind(this),
-      recordInteraction: this.recordInteraction.bind(this),
+      skappAction: this.skappAction.bind(this)
     };
 
     // create connection
@@ -56,6 +55,107 @@ export default class ContentRecordDAC implements IContentRecordDAC {
       methods,
     );
   }
+  public async skappAction(action: skappActionType, appId: string, data: any): Promise<IDACResponse> {
+    let result:IDACResponse = {
+      submitted:false,
+      
+    };
+    try{
+    switch(action){
+        case skappActionType.DEPLOY:
+        case skappActionType.REDEPLOY:
+          this.setDeployedAppInfo(appId,data)
+          this.updateDeployedIndex(appId);
+          result.submitted=true
+          break; 
+        case skappActionType.PUBLISH:
+          let appstats:IAppStats={
+            id:appId,
+            version:'1',
+            prevSkylink:'',
+            ts: (new Date()).toUTCString(),
+            content : {
+              favorite : 0,
+              viewed: 0, // counter increments everytime card is clicked to view details
+              liked : 0,
+              accessed : 0
+            }
+          }
+          this.setPublishedAppStats(appId,appstats)
+          let appcomments:IAppComments={
+            id:appId,
+            version:'1',
+            prevSkylink:'',
+            ts: (new Date()).toUTCString(),
+            content:{
+              comments:[]
+            }
+          }
+          this.setPublishedAppComments(appId,appcomments)
+        case skappActionType.REPUBLISH:
+          this.setPublishedAppInfo(appId,data)
+          this.updatePublisedIndex(appId);
+          result.submitted=true
+          break;
+        case skappActionType.LIKED:
+        case skappActionType.UNLIKED:
+          let like:IAppStats = await this.getPublishedAppStats(appId);
+          like.ts= (new Date()).toUTCString();
+          like.content.liked=action==skappActionType.LIKED?1:0;
+          this.setPublishedAppStats(appId,like);
+          break;       
+        case skappActionType.FAVORITE:
+        case skappActionType.UNFAVORITE:
+          let fav:IAppStats = await this.getPublishedAppStats(appId);
+          fav.ts= (new Date()).toUTCString();
+          fav.content.favorite=action==skappActionType.FAVORITE?1:0;
+          this.setPublishedAppStats(appId,fav);
+          break; 
+        case skappActionType.VIEWED:
+          let view:IAppStats = await this.getPublishedAppStats(appId);
+          view.ts= (new Date()).toUTCString();
+          view.content.viewed+=1;
+          this.setPublishedAppStats(appId,view);
+          break;
+        case skappActionType.ACCESSED:
+          let access:IAppStats = await this.getPublishedAppStats(appId);
+          access.ts= (new Date()).toUTCString();
+          access.content.accessed+=1;
+          this.setPublishedAppStats(appId,access);
+          break;  
+      default:
+        this.log('No such Implementation');
+    }
+  }catch(error){
+    result.error=error;
+  }
+  return result;
+  }
+
+  private async updatePublisedIndex(appId:string){
+    let indexData:any ={};
+    try{
+      indexData=this.mySky.getJSON(this.paths.PUBLISHED_INDEX_PATH);
+    }catch(error){
+      indexData['published']=[]
+    }
+    if(!indexData.published.contains(appId)){
+      indexData.published.push(appId);
+      this.mySky.setJSON(this.paths.PUBLISHED_INDEX_PATH,indexData);
+    }
+  }
+  private async updateDeployedIndex(appId:string){
+    let indexData:any ={};
+    try{
+      indexData=this.mySky.getJSON(this.paths.DEPLOYED_INDEX_PATH);
+    }catch(error){
+      indexData['deployed']=[]
+    }
+    if(!indexData.deployed.contains(appId)){
+      indexData.deployed.push(appId);
+      this.mySky.setJSON(this.paths.DEPLOYED_INDEX_PATH,indexData);
+    }
+  }
 
   public async init() {
     try {
@@ -66,58 +166,72 @@ export default class ContentRecordDAC implements IContentRecordDAC {
       this.skapp = skapp;
 
       this.paths = {
-        SKAPPS_DICT_PATH: `${DATA_DOMAIN}/skapps.json`,
-        NC_INDEX_PATH: `${DATA_DOMAIN}/${skapp}/newcontent/index.json`,
-        NC_PAGE_PATH: `${DATA_DOMAIN}/${skapp}/newcontent/page_[NUM].json`,
-        CI_INDEX_PATH: `${DATA_DOMAIN}/${skapp}/interactions/index.json`,
-        CI_PAGE_PATH: `${DATA_DOMAIN}/${skapp}/interactions/page_[NUM].json`,
+        SKAPPS_DICT_PATH: `${DATA_DOMAIN}/skapp-dict.json`,//{skapp_name:true/false}
+        PUBLISHED_INDEX_PATH: `${DATA_DOMAIN}/${skapp}/published/index.json`,
+        ///JSON Data: [appId1, AppId2....]
+        //PATH_Example: /skyapps.hns/skapp.hns/published/index.json, /skyapps.hns/anotherAppStore.hns/published/index.json..etc
+        PUBLISHED_APP_INFO_PATH:`${DATA_DOMAIN}/${skapp}/published/`,
+        PUBLISHED_APP_COMMENT_PATH: `${DATA_DOMAIN}/${skapp}/published/`,//app-comments.json
+        PUBLISHED_APP_STATS_PATH: `${DATA_DOMAIN}/${skapp}/published/`,//app-stats.json
+
+        DEPLOYED_INDEX_PATH: `${DATA_DOMAIN}/${skapp}/deployed/index.json`,
+        //JSON Data: [appId1, AppId2....]
+        DEPLOYED_APP_INFO_PATH: `${DATA_DOMAIN}/${skapp}/deployed/`,
+
       }
 
       // load mysky
       const opts = { dev: DEV_ENABLED }
       this.mySky = await this.client.loadMySky(DATA_DOMAIN, opts)
+
+
     } catch (error) {
       this.log('Failed to load MySky, err: ', error)
       throw error;
     }
+
+    try{
+     this.skappDict= this.mySky.getJSON(this.paths.SKAPPS_DICT_PATH)
+    }catch(error){
+      this.log('Failed to load skappDict, err: ', error)
+      this.skappDict[this.skapp]=true;
+      this.mySky.setJSON(this.paths.SKAPPS_DICT_PATH,this.skappDict);
+      this.log('updated current skapp to skapp dict');
+    }
   }
 
+  private async getPublishedAppInfo(appId:string):Promise<IPublishedApp>{
+    return await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appInfo.json');
+  }
+  private async getPublishedAppStats(appId:string):Promise<IAppStats>{
+    return await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-stats.json');
+  }
+  private async setPublishedAppStats(appId:string,data:IAppStats){
+    return await this.mySky.setJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-stats.json',data);
+  }
+  private async getPublishedAppComments(appId:string):Promise<IAppComments>{
+    return await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-comments.json');
+  }
+  private async setPublishedAppComments(appId:string,data:IAppComments){
+    return await this.mySky.setJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-comments.json',data);
+  }
+  private async setPublishedAppInfo(appId:string, appData:IPublishedApp){
+    return await this.mySky.setJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appInfo.json',appData);
+  }
+  private async getDeployedAppInfo(appId:string){
+    return await this.mySky.getJSON(this.paths.DEPLOYED_APP_INFO_PATH+appId+'/'+'appInfo.json');
+  }
+  private async setDeployedAppInfo(appId:string, appData:IDeployedApp){
+    return await this.mySky.setJSON(this.paths.DEPLOYED_APP_INFO_PATH+appId+'/'+'appInfo.json',appData);
+  }
   // onUserLogin is called by MySky when the user has logged in successfully
   public async onUserLogin() {
-    // Ensure file hierarchy will ensure the index and current page file for
-    // both entry types get precreated. This should alleviate a very slow
-    // `getJSON` timeout on inserting the first entry.
-    this.ensureFileHierarchy()
-      .then(() => { this.log('Successfully ensured file hierarchy') })
-      .catch(err => { this.log('Failed to ensure hierarchy, err: ', err) })
-
     // Register the skapp name in the dictionary
     this.registerSkappName()
       .then(() => { this.log('Successfully registered skappname') })
       .catch(err => { this.log('Failed to register skappname, err: ', err) })
   }
 
-  // recordNewContent will record the new content creation in the content record
-  public async recordNewContent(...data: IContentInfo[]): Promise<IDACResponse> {
-    try { 
-      // purposefully not awaited
-      this.handleNewEntries(EntryType.NEWCONTENT, ...data)
-    } catch(error) {
-      this.log('Error occurred trying to record new content, err: ', error)
-    }
-    return { submitted: true }
-  }
-
-  // recordInteraction will record a new interaction in the content record
-  public async recordInteraction(...data: IContentInfo[]): Promise<IDACResponse> {
-    try {
-      // purposefully not awaited
-      this.handleNewEntries(EntryType.INTERACTIONS, ...data)
-    } catch(error) {
-      this.log('Error occurred trying to record interaction, err: ', error) 
-    };
-    return { submitted: true }
-  }
 
   // registerSkappName is called on init and ensures this skapp name is
   // registered in the skapp name dictionary.
@@ -131,114 +245,6 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     await this.updateFile(SKAPPS_DICT_PATH, skapps);
   }
 
-  // handleNewEntries is called by both 'recordNewContent' and
-  // 'recordInteraction' and handles the given entry accordingly.
-  private async handleNewEntries(kind: EntryType, ...data: IContentInfo[]) {
-    let index = await this.fetchIndex(kind);
-    let page = await this.fetchPage<IContentPersistence>(kind, index);
-
-    let entriesAddedToPage = 0;
-    for (const entry of data) {
-      let persistence: IContentPersistence;
-      try {
-        persistence = this.toPersistence(entry);
-      } catch (error) {
-        this.log("Failed to transform entry to persistence object", error)
-        continue;
-      }
-
-      page.entries.push(persistence);
-      entriesAddedToPage++;
-      if (page.entries.length === INDEX_DEFAULT_PAGE_SIZE) {
-        // TODO: optimize performance
-        await this.updateFile(page.pagePath, page);
-        index = await this.updateIndex(kind, index, page);
-        page = await this.fetchPage<IContentPersistence>(kind, index);
-        entriesAddedToPage = 0;
-      }
-    }
-
-    if (entriesAddedToPage) {
-      await Promise.all([
-        this.updateFile(page.pagePath, page),
-        this.updateIndex(kind, index, page)
-      ]);
-    }
-  }
-
-  // updateIndex is called after a new entry got inserted and will update the
-  // index to reflect this recently inserted entry.
-  private async updateIndex(kind: EntryType, index: IIndex, page: IPage<INewContentPersistence>): Promise<IIndex> {
-    const indexPath = kind === EntryType.NEWCONTENT
-      ? this.paths.NC_INDEX_PATH
-      : this.paths.CI_INDEX_PATH;
-  
-    const pagePath = kind === EntryType.NEWCONTENT
-      ? this.paths.NC_PAGE_PATH
-      : this.paths.CI_PAGE_PATH;
-    
-    index.currPageNumEntries = page.entries.length
-
-    // rotate pages if necessary
-    if (index.currPageNumEntries === INDEX_DEFAULT_PAGE_SIZE) {
-      index.currPageNumber += 1
-      const newPageNumStr = String(index.currPageNumber)
-      const newPage = pagePath.replace(PAGE_REF, newPageNumStr);
-      index.pages.push(newPage)
-    }
-    await this.updateFile(indexPath, index)
-    return index;
-  }
-
-  // fetchIndex downloads the index, if the index does not exist yet it will
-  // return the default index.
-  private async fetchIndex(kind: EntryType): Promise<IIndex> {
-    const indexPath = kind === EntryType.NEWCONTENT
-      ? this.paths.NC_INDEX_PATH
-      : this.paths.CI_INDEX_PATH;
-    
-    const firstPagePath = kind === EntryType.NEWCONTENT
-      ? this.paths.NC_PAGE_PATH.replace(PAGE_REF, String(0))
-      : this.paths.CI_PAGE_PATH.replace(PAGE_REF, String(0));
-
-    let index = await this.downloadFile<IIndex>(indexPath);
-    if (!index) {
-      index = {
-        version: INDEX_VERSION,
-        currPageNumber: 0,
-        currPageNumEntries: 0,
-        pages: [firstPagePath],
-        pageSize: INDEX_DEFAULT_PAGE_SIZE,
-      }
-    }
-    return index;
-  }
-
-  // fetchPage downloads the current page for given index, if the page does not
-  // exist yet it will return the default page.
-  private async fetchPage<T>(kind: EntryType, index: IIndex): Promise<IPage<T>> {
-    const indexPath = kind === EntryType.NEWCONTENT
-      ? this.paths.NC_INDEX_PATH
-      : this.paths.CI_INDEX_PATH;
-
-    const pagePath = kind === EntryType.NEWCONTENT
-      ? this.paths.NC_PAGE_PATH
-      : this.paths.CI_PAGE_PATH;
-    
-    const currPageStr = String(index.currPageNumber)
-    const currPagePath = pagePath.replace(PAGE_REF, currPageStr);
-
-    let page = await this.downloadFile<IPage<T>>(currPagePath);
-    if (!page) {
-      page = {
-        version: INDEX_VERSION,
-        indexPath,
-        pagePath: currPagePath,
-        entries: [],
-      }
-    }
-    return page
-  }
 
   // downloadFile merely wraps getJSON but is typed in a way that avoids
   // repeating the awkward "as unknown as T" everywhere
@@ -260,16 +266,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     await this.mySky.setJSON(path, data as unknown as JsonData)
   }
 
-  // ensureFileHierarchy ensures that for every entry type its current index and
-  // page file exist, this ensures we do not take the hit for it when the user
-  // interacts with the DAC, seeing as non existing file requests time out only
-  // after a certain amount of time.
-  private async ensureFileHierarchy(): Promise<void> {
-    for (const entryType of [EntryType.NEWCONTENT, EntryType.INTERACTIONS]) {
-      const index = await this.fetchIndex(entryType)
-      await this.fetchPage(entryType, index)
-    }
-  }
+
 
   // toPersistence turns content info into a content persistence object
   private toPersistence(data: IContentInfo): IContentPersistence {
