@@ -200,28 +200,28 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     }
   }
 
-  private async getPublishedAppInfo(appId:string):Promise<IPublishedApp>{
+  private async getPublishedAppInfo(appId:string):Promise<any>{
     return await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appInfo.json');
   }
-  private async getPublishedAppStats(appId:string):Promise<IAppStats>{
-    return await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-stats.json');
+  private async getPublishedAppStats(appId:string):Promise<any>{
+    return (await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-stats.json'));
   }
-  private async setPublishedAppStats(appId:string,data:IAppStats){
+  private async setPublishedAppStats(appId:string,data:any){
     return await this.mySky.setJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-stats.json',data);
   }
-  private async getPublishedAppComments(appId:string):Promise<IAppComments>{
+  private async getPublishedAppComments(appId:string):Promise<any>{
     return await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-comments.json');
   }
-  private async setPublishedAppComments(appId:string,data:IAppComments){
+  private async setPublishedAppComments(appId:string,data:any){
     return await this.mySky.setJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-comments.json',data);
   }
-  private async setPublishedAppInfo(appId:string, appData:IPublishedApp){
+  private async setPublishedAppInfo(appId:string, appData:any){
     return await this.mySky.setJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appInfo.json',appData);
   }
   private async getDeployedAppInfo(appId:string){
     return await this.mySky.getJSON(this.paths.DEPLOYED_APP_INFO_PATH+appId+'/'+'appInfo.json');
   }
-  private async setDeployedAppInfo(appId:string, appData:IDeployedApp){
+  private async setDeployedAppInfo(appId:string, appData:any){
     return await this.mySky.setJSON(this.paths.DEPLOYED_APP_INFO_PATH+appId+'/'+'appInfo.json',appData);
   }
   // onUserLogin is called by MySky when the user has logged in successfully
