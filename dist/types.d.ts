@@ -1,10 +1,86 @@
 export interface IContentRecordDAC {
-    recordNewContent(content: IContentInfo): Promise<IDACResponse>;
-    recordInteraction(content: IContentInfo): Promise<IDACResponse>;
+    skappAction(action: skappActionType, appId: string, data: any): Promise<IDACResponse>;
 }
 export interface IContentInfo {
     skylink: string;
     metadata: object;
+}
+export declare enum skappActionType {
+    'PUBLISH' = 0,
+    'REPUBLISH' = 1,
+    'DEPLOY' = 2,
+    'REDEPLOY' = 3,
+    'VIEWED' = 4,
+    'ACCESSED' = 5,
+    'FAVORITE' = 6,
+    'UNFAVORITE' = 7,
+    'LIKED' = 8,
+    'UNLIKED' = 9,
+    'ADD_COMMENT' = 10,
+    'EDIT_COMMENT' = 11,
+    'REMOVE_COMMENT' = 12
+}
+export interface IApp {
+    id: string;
+    version: string;
+    prevSkylink: string;
+    ts: string;
+}
+export interface IDeployedApp extends IApp {
+    content: IAppContent;
+}
+export interface IPublishedApp extends IApp {
+    content: IPublishAppContent;
+}
+export interface IPublishAppContent extends IAppContent {
+    skappLogo: string;
+    demoUrl: string;
+    age: string;
+    appUrl: string;
+    category: string[];
+    tags: string[];
+    appStatus: string;
+    appDescription: string;
+    releaseNotes: string;
+    supportDetails: string;
+    connections: ISocialConnect;
+}
+export interface ISocialConnect {
+    twitter: string;
+    email: string;
+    discord: string;
+}
+export interface IAppContent {
+    storageGateway: string;
+    hns: string;
+    skylink: string;
+    defaultPath: string;
+    portalMinVersion: string;
+    sourceCode: string;
+    history: string[];
+}
+export interface IAppInfo {
+    skylink: string;
+    metadata: object;
+}
+export interface IAppStats extends IApp {
+    content: IAppStatsContents;
+}
+export interface IAppStatsContents {
+    favorite: number;
+    viewed: number;
+    liked: number;
+    accessed: number;
+}
+export interface IAppComments extends IApp {
+    content: IAppCommentsContents;
+}
+export interface IAppCommentsContents {
+    comments: IComments[];
+}
+export interface IComments {
+    timestamp: string;
+    comment: string;
 }
 export interface IContentPersistence {
     timestamp: number;
@@ -39,8 +115,10 @@ export declare enum EntryType {
 }
 export interface IFilePaths {
     SKAPPS_DICT_PATH: string;
-    NC_INDEX_PATH: string;
-    NC_PAGE_PATH: string;
-    CI_INDEX_PATH: string;
-    CI_PAGE_PATH: string;
+    PUBLISHED_INDEX_PATH: string;
+    PUBLISHED_APP_INFO_PATH: string;
+    PUBLISHED_APP_COMMENT_PATH: string;
+    PUBLISHED_APP_STATS_PATH: string;
+    DEPLOYED_INDEX_PATH: string;
+    DEPLOYED_APP_INFO_PATH: string;
 }

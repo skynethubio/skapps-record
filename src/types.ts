@@ -1,6 +1,11 @@
 
 export interface IContentRecordDAC {
   skappAction(action: skappActionType, appId:string,data:any): Promise<IDACResponse>;
+  getPublishedApps(appIds: string[]): Promise<any[]>;
+  getSkappsInfo(appIds: string[]): Promise<any[]>;
+  getSkappsStats(appId: string): Promise<any>;
+  getSkappsComments(appId: string): Promise<any>;
+  getDeployedApps(appIds: string[]): Promise<any[]>;
 }
 
 export interface IContentInfo {

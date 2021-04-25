@@ -2,6 +2,7 @@ import { Buffer } from "buffer"
 import { SkynetClient, MySky, JsonData } from "skynet-js";
 import { ChildHandshake, Connection, WindowMessenger } from "post-me";
 import { IContentInfo, skappActionType, IPublishedApp, IIndex, IPage, IContentPersistence, INewContentPersistence, EntryType, IDACResponse, IDictionary, IContentRecordDAC, IFilePaths, IAppComments, IAppInfo, IAppStats, IDeployedApp } from "./types";
+import { exception } from "node:console";
 
 // DAC consts
 const DATA_DOMAIN = "skapps.hns";
@@ -42,7 +43,13 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     const methods = {
       init: this.init.bind(this),
       onUserLogin: this.onUserLogin.bind(this),
-      skappAction: this.skappAction.bind(this)
+      skappAction: this.skappAction.bind(this),
+      getPublishedApps: this.getPublishedApps.bind(this),
+      getSkappsInfo: this.getSkappsInfo.bind(this),
+      getSkappsStats: this.getSkappsStats.bind(this),
+      getSkappsComments: this.getSkappsComments.bind(this),
+      getDeployedApps: this.getDeployedApps.bind(this)
+
     };
 
     // create connection
@@ -99,29 +106,45 @@ export default class ContentRecordDAC implements IContentRecordDAC {
           break;
         case skappActionType.LIKED:
         case skappActionType.UNLIKED:
+          if(await this.checkPublishedApp(appId)){
           let like:IAppStats = await this.getPublishedAppStats(appId);
           like.ts= (new Date()).toUTCString();
           like.content.liked=action==skappActionType.LIKED?1:0;
           this.setPublishedAppStats(appId,like);
+          }
           break;       
         case skappActionType.FAVORITE:
         case skappActionType.UNFAVORITE:
+          if(await this.checkPublishedApp(appId)){
           let fav:IAppStats = await this.getPublishedAppStats(appId);
           fav.ts= (new Date()).toUTCString();
           fav.content.favorite=action==skappActionType.FAVORITE?1:0;
           this.setPublishedAppStats(appId,fav);
+          }
           break; 
         case skappActionType.VIEWED:
+          if(await this.checkPublishedApp(appId)){
           let view:IAppStats = await this.getPublishedAppStats(appId);
           view.ts= (new Date()).toUTCString();
           view.content.viewed+=1;
           this.setPublishedAppStats(appId,view);
+          }
           break;
         case skappActionType.ACCESSED:
+          if(await this.checkPublishedApp(appId)){
           let access:IAppStats = await this.getPublishedAppStats(appId);
           access.ts= (new Date()).toUTCString();
           access.content.accessed+=1;
           this.setPublishedAppStats(appId,access);
+          }
+          break;
+        case skappActionType.ADD_COMMENT:
+          if( await this.checkPublishedApp(appId)){
+          let comment:IAppComments = await this.getPublishedAppComments(appId);
+          comment.ts= (new Date()).toUTCString();
+          comment.content.comments.push({timestamp:(new Date()).toUTCString(), comment:data.comment})
+          this.setPublishedAppComments(appId,comment);
+          }
           break;  
       default:
         this.log('No such Implementation');
@@ -130,6 +153,21 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     result.error=error;
   }
   return result;
+  }
+
+  private async checkPublishedApp(appId:string){
+    let indexData:any ={};
+    try{
+      indexData=this.mySky.getJSON(this.paths.PUBLISHED_INDEX_PATH);
+    }catch(error){
+      throw exception('NO Index present')
+    }
+    if(indexData.published.contains(appId)){
+      return true;
+    }
+    else{
+      return false;
+    }
   }
 
   private async updatePublisedIndex(appId:string){
@@ -173,11 +211,9 @@ export default class ContentRecordDAC implements IContentRecordDAC {
         PUBLISHED_APP_INFO_PATH:`${DATA_DOMAIN}/${skapp}/published/`,
         PUBLISHED_APP_COMMENT_PATH: `${DATA_DOMAIN}/${skapp}/published/`,//app-comments.json
         PUBLISHED_APP_STATS_PATH: `${DATA_DOMAIN}/${skapp}/published/`,//app-stats.json
-
         DEPLOYED_INDEX_PATH: `${DATA_DOMAIN}/${skapp}/deployed/index.json`,
         //JSON Data: [appId1, AppId2....]
         DEPLOYED_APP_INFO_PATH: `${DATA_DOMAIN}/${skapp}/deployed/`,
-
       }
 
       // load mysky
@@ -200,6 +236,104 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     }
   }
 
+  public async getPublishedApps(appIds: string[]): Promise<any[]> {
+    let indexData:any ={};
+    let results:any[] = [];
+    if(appIds ==null || appIds.length==0 ){
+     try {
+      indexData=this.mySky.getJSON(this.paths.PUBLISHED_INDEX_PATH);
+     } catch (error) {
+      throw new Error("NO PUBLISHED APP");
+     } 
+     appIds = indexData.published;
+    }
+    for(let appid of appIds){
+      let appData :any;
+      try{
+        appData= await this.getPublishedAppInfo(appid);
+      results.push(appData);
+      }catch(error){
+        this.log('missing json for appid :',appid);
+      }
+    }
+    return results;
+  }
+
+  public async getSkappsInfo(appIds: string[]): Promise<any[]> {
+    let indexData:any ={};
+    let results:any[] = [];
+    if(appIds ==null || appIds.length==0 ){
+     try {
+      indexData=this.mySky.getJSON(this.paths.PUBLISHED_INDEX_PATH);
+     } catch (error) {
+      throw new Error("NO PUBLISHED APP");
+     } 
+     appIds = indexData.published;
+    }
+    for(let appid of appIds){
+      let appMaster:any={};
+      let appData :any;
+      let appStats :any;
+      let appComments :any;
+      try{
+        appData= await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appid+'/'+'appInfo.json');
+        appStats= await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appid+'/'+'appStats.json');
+        appComments= await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appid+'/'+'appComments.json');
+        appMaster={
+          appdata:appData,
+          appstats: appStats,
+          appcomments: appComments
+        }
+        results.push(appMaster);
+      }catch(error){
+        this.log('missing json for appid :',appid);
+      }
+    }
+    return results;
+  }
+  public async getSkappsStats(appId: string): Promise<any> {
+    let appData :any;
+    try{
+      appData= await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appStats.json');
+    
+    }catch(error){
+      this.log('missing json for appid :',appId);
+      throw new Error("missing json for appid :"+appId);
+    }
+    return appData;
+  }
+  public async getSkappsComments(appId: string): Promise<any> {
+    let appData :any;
+    try{
+      appData= await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appComments.json');
+    }catch(error){
+      this.log('missing json for appid :',appId);
+      throw new Error("missing json for appid :"+appId);
+    }
+    return appData;
+  }
+  public async getDeployedApps(appIds: string[]): Promise<any[]> {
+    let indexData:any ={};
+    let results:IDeployedApp[] = [];
+    if(appIds ==null || appIds.length==0 ){
+     try {
+      indexData=this.mySky.getJSON(this.paths.DEPLOYED_INDEX_PATH);
+     } catch (error) {
+      throw new Error("NO DEPLOYED APP");
+     } 
+     appIds = indexData.deployed;
+    }
+    for(let appid of appIds){
+      let appData :any;
+      try{
+        appData= await this.getDeployedAppInfo(appid);
+      results.push(appData);
+      }catch(error){
+        this.log('missing json for appid :',appid);
+      }
+    }
+    return results;
+  }
   private async getPublishedAppInfo(appId:string):Promise<any>{
     return await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appInfo.json');
   }
