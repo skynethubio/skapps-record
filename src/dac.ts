@@ -2,14 +2,13 @@ import { Buffer } from "buffer"
 import { SkynetClient, MySky, JsonData } from "skynet-js";
 import { ChildHandshake, Connection, WindowMessenger } from "post-me";
 import { IContentInfo, skappActionType, IPublishedApp, IIndex, IPage, IContentPersistence, INewContentPersistence, EntryType, IDACResponse, IDictionary, IContentRecordDAC, IFilePaths, IAppComments, IAppInfo, IAppStats, IDeployedApp } from "./types";
-import { exception } from "node:console";
 
 // DAC consts
 const DATA_DOMAIN = "skapps.hns";
 
-const urlParams = new URLSearchParams(window.location.search);
-const DEBUG_ENABLED = urlParams.get('debug') === "true";
-const DEV_ENABLED = urlParams.get('dev') === "true";
+//const urlParams = new URLSearchParams(window.location.search);
+const DEBUG_ENABLED =  true;
+const DEV_ENABLED = true;
 
 // page consts
 const ENTRY_MAX_SIZE = 1 << 12; // 4kib
@@ -160,7 +159,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     try{
       indexData=this.mySky.getJSON(this.paths.PUBLISHED_INDEX_PATH);
     }catch(error){
-      throw exception('NO Index present')
+      throw Error('NO Index present')
     }
     if(indexData.published.contains(appId)){
       return true;
