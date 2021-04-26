@@ -45,8 +45,8 @@ export default class ContentRecordDAC implements IContentRecordDAC {
       skappAction: this.skappAction.bind(this),
       getPublishedApps: this.getPublishedApps.bind(this),
       getSkappsInfo: this.getSkappsInfo.bind(this),
-      getSkappsStats: this.getSkappsStats.bind(this),
-      getSkappsComments: this.getSkappsComments.bind(this),
+      getSkappStats: this.getSkappStats.bind(this),
+      getSkappComments: this.getSkappComments.bind(this),
       getDeployedApps: this.getDeployedApps.bind(this)
 
     };
@@ -70,8 +70,8 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     switch(action){
         case skappActionType.DEPLOY:
         case skappActionType.REDEPLOY:
-          this.setDeployedAppInfo(appId,data)
-          this.updateDeployedIndex(appId);
+          await this.setDeployedAppInfo(appId,data)
+          await this.updateDeployedIndex(appId);
           result.submitted=true
           break; 
         case skappActionType.PUBLISH:
@@ -87,7 +87,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
               accessed : 0
             }
           }
-          this.setPublishedAppStats(appId,appstats)
+          await this.setPublishedAppStats(appId,appstats)
           let appcomments:IAppComments={
             id:appId,
             version:'1',
@@ -97,10 +97,10 @@ export default class ContentRecordDAC implements IContentRecordDAC {
               comments:[]
             }
           }
-          this.setPublishedAppComments(appId,appcomments)
+          await this.setPublishedAppComments(appId,appcomments)
         case skappActionType.REPUBLISH:
-          this.setPublishedAppInfo(appId,data)
-          this.updatePublisedIndex(appId);
+          await this.setPublishedAppInfo(appId,data)
+          await this.updatePublisedIndex(appId);
           result.submitted=true
           break;
         case skappActionType.LIKED:
@@ -109,7 +109,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
           let like:IAppStats = await this.getPublishedAppStats(appId);
           like.ts= (new Date()).toUTCString();
           like.content.liked=action==skappActionType.LIKED?1:0;
-          this.setPublishedAppStats(appId,like);
+          await this.setPublishedAppStats(appId,like);
           }
           break;       
         case skappActionType.FAVORITE:
@@ -118,7 +118,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
           let fav:IAppStats = await this.getPublishedAppStats(appId);
           fav.ts= (new Date()).toUTCString();
           fav.content.favorite=action==skappActionType.FAVORITE?1:0;
-          this.setPublishedAppStats(appId,fav);
+          await this.setPublishedAppStats(appId,fav);
           }
           break; 
         case skappActionType.VIEWED:
@@ -126,7 +126,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
           let view:IAppStats = await this.getPublishedAppStats(appId);
           view.ts= (new Date()).toUTCString();
           view.content.viewed+=1;
-          this.setPublishedAppStats(appId,view);
+          await this.setPublishedAppStats(appId,view);
           }
           break;
         case skappActionType.ACCESSED:
@@ -134,7 +134,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
           let access:IAppStats = await this.getPublishedAppStats(appId);
           access.ts= (new Date()).toUTCString();
           access.content.accessed+=1;
-          this.setPublishedAppStats(appId,access);
+          await this.setPublishedAppStats(appId,access);
           }
           break;
         case skappActionType.ADD_COMMENT:
@@ -142,7 +142,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
           let comment:IAppComments = await this.getPublishedAppComments(appId);
           comment.ts= (new Date()).toUTCString();
           comment.content.comments.push({timestamp:(new Date()).toUTCString(), comment:data.comment})
-          this.setPublishedAppComments(appId,comment);
+          await this.setPublishedAppComments(appId,comment);
           }
           break;  
       default:
@@ -157,11 +157,11 @@ export default class ContentRecordDAC implements IContentRecordDAC {
   private async checkPublishedApp(appId:string){
     let indexData:any ={};
     try{
-      indexData=this.mySky.getJSON(this.paths.PUBLISHED_INDEX_PATH);
+      indexData=await this.mySky.getJSON(this.paths.PUBLISHED_INDEX_PATH);
     }catch(error){
       throw Error('NO Index present')
     }
-    if(indexData.published.contains(appId)){
+    if(indexData.published.includes(appId)){
       return true;
     }
     else{
@@ -172,11 +172,14 @@ export default class ContentRecordDAC implements IContentRecordDAC {
   private async updatePublisedIndex(appId:string){
     let indexData:any ={};
     try{
-      indexData=this.mySky.getJSON(this.paths.PUBLISHED_INDEX_PATH);
+      indexData=await this.mySky.getJSON(this.paths.PUBLISHED_INDEX_PATH);
     }catch(error){
       indexData['published']=[]
     }
-    if(!indexData.published.contains(appId)){
+    if(indexData==null || indexData==undefined ||indexData.published==null ||indexData.published==undefined)
+    {indexData={}
+    indexData['published']=[]}
+    if(!indexData.published.includes(appId)){
       indexData.published.push(appId);
       this.mySky.setJSON(this.paths.PUBLISHED_INDEX_PATH,indexData);
     }
@@ -184,11 +187,14 @@ export default class ContentRecordDAC implements IContentRecordDAC {
   private async updateDeployedIndex(appId:string){
     let indexData:any ={};
     try{
-      indexData=this.mySky.getJSON(this.paths.DEPLOYED_INDEX_PATH);
+      indexData=await this.mySky.getJSON(this.paths.DEPLOYED_INDEX_PATH);
     }catch(error){
       indexData['deployed']=[]
     }
-    if(!indexData.deployed.contains(appId)){
+    if(indexData==null || indexData==undefined ||indexData.deployed==null ||indexData.deployed==undefined)
+    {indexData={}
+    indexData['deployed']=[]}
+    if(!indexData.deployed.includes(appId)){
       indexData.deployed.push(appId);
       this.mySky.setJSON(this.paths.DEPLOYED_INDEX_PATH,indexData);
     }
@@ -226,7 +232,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     }
 
     try{
-     this.skappDict= this.mySky.getJSON(this.paths.SKAPPS_DICT_PATH)
+     this.skappDict= await this.mySky.getJSON(this.paths.SKAPPS_DICT_PATH)
     }catch(error){
       this.log('Failed to load skappDict, err: ', error)
       this.skappDict[this.skapp]=true;
@@ -240,7 +246,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     let results:any[] = [];
     if(appIds ==null || appIds.length==0 ){
      try {
-      indexData=this.mySky.getJSON(this.paths.PUBLISHED_INDEX_PATH);
+      indexData=await this.mySky.getJSON(this.paths.PUBLISHED_INDEX_PATH);
      } catch (error) {
       throw new Error("NO PUBLISHED APP");
      } 
@@ -263,7 +269,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     let results:any[] = [];
     if(appIds ==null || appIds.length==0 ){
      try {
-      indexData=this.mySky.getJSON(this.paths.PUBLISHED_INDEX_PATH);
+      indexData=await this.mySky.getJSON(this.paths.PUBLISHED_INDEX_PATH);
      } catch (error) {
       throw new Error("NO PUBLISHED APP");
      } 
@@ -290,7 +296,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     }
     return results;
   }
-  public async getSkappsStats(appId: string): Promise<any> {
+  public async getSkappStats(appId: string): Promise<any> {
     let appData :any;
     try{
       appData= await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appStats.json');
@@ -301,7 +307,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     }
     return appData;
   }
-  public async getSkappsComments(appId: string): Promise<any> {
+  public async getSkappComments(appId: string): Promise<any> {
     let appData :any;
     try{
       appData= await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appComments.json');
@@ -316,7 +322,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     let results:IDeployedApp[] = [];
     if(appIds ==null || appIds.length==0 ){
      try {
-      indexData=this.mySky.getJSON(this.paths.DEPLOYED_INDEX_PATH);
+      indexData=await this.mySky.getJSON(this.paths.DEPLOYED_INDEX_PATH);
      } catch (error) {
       throw new Error("NO DEPLOYED APP");
      } 
@@ -360,9 +366,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
   // onUserLogin is called by MySky when the user has logged in successfully
   public async onUserLogin() {
     // Register the skapp name in the dictionary
-    this.registerSkappName()
-      .then(() => { this.log('Successfully registered skappname') })
-      .catch(err => { this.log('Failed to register skappname, err: ', err) })
+    
   }
 
 

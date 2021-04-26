@@ -15,8 +15,8 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     init(): Promise<void>;
     getPublishedApps(appIds: string[]): Promise<any[]>;
     getSkappsInfo(appIds: string[]): Promise<any[]>;
-    getSkappsStats(appId: string): Promise<any>;
-    getSkappsComments(appId: string): Promise<any>;
+    getSkappStats(appId: string): Promise<any>;
+    getSkappComments(appId: string): Promise<any>;
     getDeployedApps(appIds: string[]): Promise<any[]>;
     private getPublishedAppInfo;
     private getPublishedAppStats;
