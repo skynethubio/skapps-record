@@ -232,11 +232,11 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     }
 
     try{
-     this.skappDict= await this.mySky.getJSON(this.paths.SKAPPS_DICT_PATH)
+     //this.skappDict= await this.mySky.getJSON(this.paths.SKAPPS_DICT_PATH)
     }catch(error){
       this.log('Failed to load skappDict, err: ', error)
       this.skappDict[this.skapp]=true;
-      this.mySky.setJSON(this.paths.SKAPPS_DICT_PATH,this.skappDict);
+      //this.mySky.setJSON(this.paths.SKAPPS_DICT_PATH,this.skappDict);
       this.log('updated current skapp to skapp dict');
     }
   }
