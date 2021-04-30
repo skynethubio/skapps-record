@@ -157,7 +157,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
   private async checkPublishedApp(appId:string){
     let indexData:any ={};
     try{
-      indexData=await this.mySky.getJSON(this.paths.PUBLISHED_INDEX_PATH);
+      indexData=await this.downloadFile(this.paths.PUBLISHED_INDEX_PATH);
     }catch(error){
       throw Error('NO Index present')
     }
@@ -172,7 +172,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
   private async updatePublisedIndex(appId:string){
     let indexData:any ={};
     try{
-      indexData=await this.mySky.getJSON(this.paths.PUBLISHED_INDEX_PATH);
+      indexData=await this.downloadFile(this.paths.PUBLISHED_INDEX_PATH);
     }catch(error){
       indexData['published']=[]
     }
@@ -187,7 +187,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
   private async updateDeployedIndex(appId:string){
     let indexData:any ={};
     try{
-      indexData=await this.mySky.getJSON(this.paths.DEPLOYED_INDEX_PATH);
+      indexData=await this.downloadFile(this.paths.DEPLOYED_INDEX_PATH);
     }catch(error){
       indexData['deployed']=[]
     }
@@ -232,7 +232,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     }
 
     try{
-     //this.skappDict= await this.mySky.getJSON(this.paths.SKAPPS_DICT_PATH)
+     //this.skappDict= await this.downloadFile(this.paths.SKAPPS_DICT_PATH)
     }catch(error){
       this.log('Failed to load skappDict, err: ', error)
       this.skappDict[this.skapp]=true;
@@ -246,7 +246,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     let results:any[] = [];
     if(appIds ==null || appIds.length==0 ){
      try {
-      indexData=await this.mySky.getJSON(this.paths.PUBLISHED_INDEX_PATH);
+      indexData=await this.downloadFile(this.paths.PUBLISHED_INDEX_PATH);
      } catch (error) {
       throw new Error("NO PUBLISHED APP");
      } 
@@ -269,7 +269,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     let results:any[] = [];
     if(appIds ==null || appIds.length==0 ){
      try {
-      indexData=await this.mySky.getJSON(this.paths.PUBLISHED_INDEX_PATH);
+      indexData=await this.downloadFile(this.paths.PUBLISHED_INDEX_PATH);
      } catch (error) {
       throw new Error("NO PUBLISHED APP");
      } 
@@ -281,9 +281,9 @@ export default class ContentRecordDAC implements IContentRecordDAC {
       let appStats :any;
       let appComments :any;
       try{
-        appData= await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appid+'/'+'appInfo.json');
-        appStats= await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appid+'/'+'appStats.json');
-        appComments= await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appid+'/'+'appComments.json');
+        appData= await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appid+'/'+'appInfo.json');
+        appStats= await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appid+'/'+'appStats.json');
+        appComments= await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appid+'/'+'appComments.json');
         appMaster={
           appdata:appData,
           appstats: appStats,
@@ -299,7 +299,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
   public async getSkappStats(appId: string): Promise<any> {
     let appData :any;
     try{
-      appData= await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appStats.json');
+      appData= await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appStats.json');
     
     }catch(error){
       this.log('missing json for appid :',appId);
@@ -310,7 +310,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
   public async getSkappComments(appId: string): Promise<any> {
     let appData :any;
     try{
-      appData= await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appComments.json');
+      appData= await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appComments.json');
     }catch(error){
       this.log('missing json for appid :',appId);
       throw new Error("missing json for appid :"+appId);
@@ -322,7 +322,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     let results:IDeployedApp[] = [];
     if(appIds ==null || appIds.length==0 ){
      try {
-      indexData=await this.mySky.getJSON(this.paths.DEPLOYED_INDEX_PATH);
+      indexData=await this.downloadFile(this.paths.DEPLOYED_INDEX_PATH);
      } catch (error) {
       throw new Error("NO DEPLOYED APP");
      } 
@@ -340,16 +340,16 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     return results;
   }
   private async getPublishedAppInfo(appId:string):Promise<any>{
-    return await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appInfo.json');
+    return await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appInfo.json');
   }
   private async getPublishedAppStats(appId:string):Promise<any>{
-    return (await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-stats.json'));
+    return (await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-stats.json'));
   }
   private async setPublishedAppStats(appId:string,data:any){
     return await this.mySky.setJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-stats.json',data);
   }
   private async getPublishedAppComments(appId:string):Promise<any>{
-    return await this.mySky.getJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-comments.json');
+    return await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-comments.json');
   }
   private async setPublishedAppComments(appId:string,data:any){
     return await this.mySky.setJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-comments.json',data);
@@ -358,7 +358,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     return await this.mySky.setJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appInfo.json',appData);
   }
   private async getDeployedAppInfo(appId:string){
-    return await this.mySky.getJSON(this.paths.DEPLOYED_APP_INFO_PATH+appId+'/'+'appInfo.json');
+    return await this.downloadFile(this.paths.DEPLOYED_APP_INFO_PATH+appId+'/'+'appInfo.json');
   }
   private async setDeployedAppInfo(appId:string, appData:any){
     return await this.mySky.setJSON(this.paths.DEPLOYED_APP_INFO_PATH+appId+'/'+'appInfo.json',appData);
@@ -386,7 +386,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
   // downloadFile merely wraps getJSON but is typed in a way that avoids
   // repeating the awkward "as unknown as T" everywhere
   private async downloadFile<T>(path: string): Promise<T | null> {
-    this.log('downloading file at path', path)
+    this.log('### Skapp-Record ### :: downloading file at path', path)
     const { data } = await this.mySky.getJSON(path)
     if (!data) {
       this.log('no data found at path', path)
