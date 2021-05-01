@@ -1,5 +1,5 @@
 
-export interface IContentRecordDAC {
+export interface ISkappDAC {
   skappAction(action: skappActionType, appId:string,data:any): Promise<IDACResponse>;
   getPublishedApps(appIds: string[]): Promise<any[]>;
   getSkappsInfo(appIds: string[]): Promise<any[]>;

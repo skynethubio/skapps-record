@@ -1,7 +1,7 @@
 import { Buffer } from "buffer"
 import { SkynetClient, MySky, JsonData } from "skynet-js";
 import { ChildHandshake, Connection, WindowMessenger } from "post-me";
-import { IContentInfo, skappActionType, IPublishedApp, IIndex, IPage, IContentPersistence, INewContentPersistence, EntryType, IDACResponse, IDictionary, IContentRecordDAC, IFilePaths, IAppComments, IAppInfo, IAppStats, IDeployedApp } from "./types";
+import { IContentInfo, skappActionType,ISkappDAC, IPublishedApp, IIndex, IPage, IContentPersistence, INewContentPersistence, EntryType, IDACResponse, IDictionary, IFilePaths, IAppComments, IAppInfo, IAppStats, IDeployedApp } from "./types";
 
 // DAC consts
 const DATA_DOMAIN = "skapps.hns";
@@ -25,7 +25,7 @@ const INDEX_VERSION = 1;
 //
 // The DAC will store these interactions across a fanout data structure that
 // consists of an index file that points to multiple page files.
-export default class ContentRecordDAC implements IContentRecordDAC {
+export default class SkappDAC implements ISkappDAC {
   protected connection: Promise<Connection>;
 
   private client: SkynetClient
