@@ -1,6 +1,6 @@
 import { Connection } from "post-me";
-import { skappActionType, IDACResponse, IContentRecordDAC } from "./types";
-export default class ContentRecordDAC implements IContentRecordDAC {
+import { skappActionType, ISkappDAC, IDACResponse } from "./types";
+export default class SkappDAC implements ISkappDAC {
     protected connection: Promise<Connection>;
     private client;
     private mySky;
@@ -14,6 +14,7 @@ export default class ContentRecordDAC implements IContentRecordDAC {
     private updateDeployedIndex;
     init(): Promise<void>;
     getPublishedApps(appIds: string[]): Promise<any[]>;
+    getPublishedAppsCount(appIds: string[]): Promise<any>;
     getSkappsInfo(appIds: string[]): Promise<any[]>;
     getSkappStats(appId: string): Promise<any>;
     getSkappComments(appId: string): Promise<any>;

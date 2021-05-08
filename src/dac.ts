@@ -47,8 +47,8 @@ export default class SkappDAC implements ISkappDAC {
       getSkappsInfo: this.getSkappsInfo.bind(this),
       getSkappStats: this.getSkappStats.bind(this),
       getSkappComments: this.getSkappComments.bind(this),
-      getDeployedApps: this.getDeployedApps.bind(this)
-
+      getDeployedApps: this.getDeployedApps.bind(this),
+      getPublishedAppsCount: this.getPublishedAppsCount.bind(this)
     };
 
     // create connection
@@ -264,6 +264,21 @@ export default class SkappDAC implements ISkappDAC {
     return results;
   }
 
+  public async getPublishedAppsCount(appIds: string[]): Promise<any> {
+    let indexData:any ={};
+    //let results:any[] = [];
+    if(appIds ==null || appIds.length==0 ){
+     try {
+      indexData=await this.downloadFile(this.paths.PUBLISHED_INDEX_PATH);
+     } catch (error) {
+      throw new Error("NO PUBLISHED APP");
+     } 
+     appIds = indexData.published;
+    }
+    
+    return appIds.length;
+  }
+
   public async getSkappsInfo(appIds: string[]): Promise<any[]> {
     let indexData:any ={};
     let results:any[] = [];
@@ -343,16 +358,16 @@ export default class SkappDAC implements ISkappDAC {
     return await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appInfo.json');
   }
   private async getPublishedAppStats(appId:string):Promise<any>{
-    return (await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-stats.json'));
+    return (await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appStats.json'));
   }
   private async setPublishedAppStats(appId:string,data:any){
-    return await this.mySky.setJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-stats.json',data);
+    return await this.mySky.setJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appStats.json',data);
   }
   private async getPublishedAppComments(appId:string):Promise<any>{
-    return await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-comments.json');
+    return await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appComments.json');
   }
   private async setPublishedAppComments(appId:string,data:any){
-    return await this.mySky.setJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'app-comments.json',data);
+    return await this.mySky.setJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appComments.json',data);
   }
   private async setPublishedAppInfo(appId:string, appData:any){
     return await this.mySky.setJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appInfo.json',appData);
