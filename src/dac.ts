@@ -4,7 +4,7 @@ import { ChildHandshake, Connection, WindowMessenger } from "post-me";
 import { IContentInfo, skappActionType,ISkappDAC, IPublishedApp, IIndex, IPage, IContentPersistence, INewContentPersistence, EntryType, IDACResponse, IDictionary, IFilePaths, IAppComments, IAppInfo, IAppStats, IDeployedApp } from "./types";
 
 // DAC consts
-const DATA_DOMAIN = "skapps.hns";
+const DATA_DOMAIN = "skapp-dac.hns";
 
 //const urlParams = new URLSearchParams(window.location.search);
 const DEBUG_ENABLED =  true;
