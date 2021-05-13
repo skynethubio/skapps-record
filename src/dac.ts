@@ -48,7 +48,9 @@ export default class SkappDAC implements ISkappDAC {
       getSkappStats: this.getSkappStats.bind(this),
       getSkappComments: this.getSkappComments.bind(this),
       getDeployedApps: this.getDeployedApps.bind(this),
-      getPublishedAppsCount: this.getPublishedAppsCount.bind(this)
+      getPublishedAppsCount: this.getPublishedAppsCount.bind(this),
+      getPublishedAppsByUserId: this.getPublishedAppsByUserId.bind(this),
+      getPublishedAppDetailByUserId: this.getPublishedAppDetailByUserId.bind(this)
     };
 
     // create connection
@@ -60,6 +62,29 @@ export default class SkappDAC implements ISkappDAC {
       }),
       methods,
     );
+  }
+  public async getPublishedAppsByUserId(userIds: string[]): Promise<any[]> {
+    let results :any=[];
+    for(let userId of userIds){
+    
+      try{
+       let  {data: publishedList}= await this.client.file.getJSON(userId, this.paths.PUBLISHED_INDEX_PATH);
+      results.concat(publishedList);
+      }catch(error){
+        this.log('missing json for appid :',userId);
+      }
+    }
+    return results;
+  }
+  public async getPublishedAppDetailByUserId(userId: string, appId: string): Promise<any[]> {
+    let appData:any={}
+    try{
+      let  {data: publishedApp}= await this.client.file.getJSON(userId,this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appInfo.json');
+      appData=publishedApp
+     }catch(error){
+       this.log('missing json for appid :',userId);
+     }
+     return appData;
   }
   public async skappAction(action: skappActionType, appId: string, data: any): Promise<IDACResponse> {
     let result:IDACResponse = {

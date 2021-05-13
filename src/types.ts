@@ -6,6 +6,8 @@ export interface ISkappDAC {
   getSkappStats(appId: string): Promise<any>;
   getSkappComments(appId: string): Promise<any>;
   getDeployedApps(appIds: string[]): Promise<any[]>;
+  getPublishedAppsByUserId(userIds: string[]): Promise<any[]>;
+  getPublishedAppDetailByUserId(userId: string, appId : string): Promise<any[]>;
 }
 
 export interface IContentInfo {
