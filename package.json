@@ -1,6 +1,6 @@
 {
   "name": "skapp-dac",
-  "version": "1.0.0",
+  "version": "0.1.7-beta",
   "description": "",
   "main": "src/index.ts",
   "scripts": {
@@ -15,8 +15,7 @@
   "license": "MIT",
   "dependencies": {
     "buffer": "^6.0.3",
-    "post-me": "^0.4.5",
-    "skynet-js": "4.0.5-beta"
+    "post-me": "^0.4.5"
   },
   "devDependencies": {
     "@types/jest": "^26.0.22",

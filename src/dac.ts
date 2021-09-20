@@ -1,30 +1,22 @@
 import { Buffer } from "buffer"
-import { SkynetClient, MySky, JsonData } from "skynet-js";
+import { SkynetClient, MySky, JsonData, JSONResponse } from "skynet-js";
+import { uint8ArrayToBase64RawUrl, base64RawUrlToUint8Array, trimSuffix, trimUriPrefix, uriSkynetPrefix } from "./util";
 import { ChildHandshake, Connection, WindowMessenger } from "post-me";
-import { IContentInfo, skappActionType,ISkappDAC, IPublishedApp, IIndex, IPage, IContentPersistence, INewContentPersistence, EntryType, IDACResponse, IDictionary, IFilePaths, IAppComments, IAppInfo, IAppStats, IDeployedApp } from "./types";
+import {
+  ISkappDAC, IDACResponse, IFilePaths, skappActionType, IDeployedAppsDDIDX, DEFAULT_SD_DEPLOYED_APPS_INDEX,
+  DEFAULT_DD_DEPLOYED_APPS_INDEX, IDeployedAppsSDIDX, IDeploymentRecord, IDeployedAppsDDIDXRecord, IDeployedAppsSDIDXRecord,
+  IPublishedAppRecord, IPublishedAppsDDIDX, DEFAULT_DD_PUBLISHED_APPS_INDEX, DEFAULT_SD_PUBLISHED_APPS_INDEX, IPublishedAppsSDIDX,
+  IPublishedAppsDDIDXRecord, IPublishedAppsSDIDXRecord, IPublishedAppsStatsDDIDX, IPublishedAppsStatsSDIDX, IPublishedAppsStatsDDIDXRecord,
+  DEFAULT_PUBLISHED_APPS_STATS_RECORD, IPublishedAppStatsRecord, IPublishedAppsStatsSDIDXRecord
+} from "./types";
 
 // DAC consts
 const DATA_DOMAIN = "skapp-dac.hns";
+const DAC_VERSION = "0.1.6-beta";
 
 //const urlParams = new URLSearchParams(window.location.search);
-const DEBUG_ENABLED =  true;
-const DEV_ENABLED = true;
-
-// page consts
-const ENTRY_MAX_SIZE = 1 << 12; // 4kib
-const PAGE_REF = '[NUM]';
-
-// index consts
-const INDEX_DEFAULT_PAGE_SIZE = 1000;
-const INDEX_VERSION = 1;
-
-// ContentRecordDAC is a DAC that allows recording user interactions with pieces
-// of content. There are two types of interactions which are:
-// - content creation
-// - content interaction (can be anything)
-//
-// The DAC will store these interactions across a fanout data structure that
-// consists of an index file that points to multiple page files.
+const DEBUG_ENABLED = true;
+const DEV_ENABLED = false;
 export default class SkappDAC implements ISkappDAC {
   protected connection: Promise<Connection>;
 
@@ -32,7 +24,11 @@ export default class SkappDAC implements ISkappDAC {
   private mySky: MySky;
   private paths: IFilePaths;
   private skapp: string;
-  private skappDict : any={};
+  private skappDict: any = {};
+
+  // will be flipped to true if all files are created
+  private fileHierarchyEnsured: boolean;
+
   public constructor(
   ) {
     // create client
@@ -42,17 +38,20 @@ export default class SkappDAC implements ISkappDAC {
     const methods = {
       init: this.init.bind(this),
       onUserLogin: this.onUserLogin.bind(this),
-      skappAction: this.skappAction.bind(this),
-      getPublishedApps: this.getPublishedApps.bind(this),
-      getSkappsInfo: this.getSkappsInfo.bind(this),
-      getSkappStats: this.getSkappStats.bind(this),
-      getSkappComments: this.getSkappComments.bind(this),
-      getDeployedApps: this.getDeployedApps.bind(this),
-      getPublishedAppsCount: this.getPublishedAppsCount.bind(this),
-      getPublishedAppsByUserId: this.getPublishedAppsByUserId.bind(this),
-      getPublishedAppDetailByUserId: this.getPublishedAppDetailByUserId.bind(this)
-    };
 
+      setDeployment: this.setDeployment.bind(this),
+      getDeployments: this.getDeployments.bind(this),
+
+      setPublishedApp: this.setPublishedApp.bind(this),
+      getPublishedApps: this.getPublishedApps.bind(this),
+      getPublishedAppIds: this.getPublishedAppIds.bind(this),
+
+      skappAction: this.skappAction.bind(this),
+      getStats: this.getStats.bind(this),
+
+      //getSkappComments: this.getSkappComments.bind(this),
+
+    };
     // create connection
     this.connection = ChildHandshake(
       new WindowMessenger({
@@ -62,167 +61,6 @@ export default class SkappDAC implements ISkappDAC {
       }),
       methods,
     );
-  }
-  public async getPublishedAppsByUserId(userIds: string[]): Promise<any[]> {
-    let results :any=[];
-    for(let userId of userIds){
-    
-      try{
-       let  {data: publishedList}= await this.client.file.getJSON(userId, this.paths.PUBLISHED_INDEX_PATH);
-      results.concat(publishedList);
-      }catch(error){
-        this.log('missing json for appid :',userId);
-      }
-    }
-    return results;
-  }
-  public async getPublishedAppDetailByUserId(userId: string, appId: string): Promise<any[]> {
-    let appData:any={}
-    try{
-      let  {data: publishedApp}= await this.client.file.getJSON(userId,this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appInfo.json');
-      appData=publishedApp
-     }catch(error){
-       this.log('missing json for appid :',userId);
-     }
-     return appData;
-  }
-  public async skappAction(action: skappActionType, appId: string, data: any): Promise<IDACResponse> {
-    let result:IDACResponse = {
-      submitted:false,
-      
-    };
-    try{
-    switch(action){
-        case skappActionType.DEPLOY:
-        case skappActionType.REDEPLOY:
-          await this.setDeployedAppInfo(appId,data)
-          await this.updateDeployedIndex(appId);
-          result.submitted=true
-          break; 
-        case skappActionType.PUBLISH:
-          let appstats:IAppStats={
-            id:appId,
-            version:'1',
-            prevSkylink:'',
-            ts: (new Date()).toUTCString(),
-            content : {
-              favorite : 0,
-              viewed: 0, // counter increments everytime card is clicked to view details
-              liked : 0,
-              accessed : 0
-            }
-          }
-          await this.setPublishedAppStats(appId,appstats)
-          let appcomments:IAppComments={
-            id:appId,
-            version:'1',
-            prevSkylink:'',
-            ts: (new Date()).toUTCString(),
-            content:{
-              comments:[]
-            }
-          }
-          await this.setPublishedAppComments(appId,appcomments)
-        case skappActionType.REPUBLISH:
-          await this.setPublishedAppInfo(appId,data)
-          await this.updatePublisedIndex(appId);
-          result.submitted=true
-          break;
-        case skappActionType.LIKED:
-        case skappActionType.UNLIKED:
-          if(await this.checkPublishedApp(appId)){
-          let like:IAppStats = await this.getPublishedAppStats(appId);
-          like.ts= (new Date()).toUTCString();
-          like.content.liked=action==skappActionType.LIKED?1:0;
-          await this.setPublishedAppStats(appId,like);
-          }
-          break;       
-        case skappActionType.FAVORITE:
-        case skappActionType.UNFAVORITE:
-          if(await this.checkPublishedApp(appId)){
-          let fav:IAppStats = await this.getPublishedAppStats(appId);
-          fav.ts= (new Date()).toUTCString();
-          fav.content.favorite=action==skappActionType.FAVORITE?1:0;
-          await this.setPublishedAppStats(appId,fav);
-          }
-          break; 
-        case skappActionType.VIEWED:
-          if(await this.checkPublishedApp(appId)){
-          let view:IAppStats = await this.getPublishedAppStats(appId);
-          view.ts= (new Date()).toUTCString();
-          view.content.viewed+=1;
-          await this.setPublishedAppStats(appId,view);
-          }
-          break;
-        case skappActionType.ACCESSED:
-          if(await this.checkPublishedApp(appId)){
-          let access:IAppStats = await this.getPublishedAppStats(appId);
-          access.ts= (new Date()).toUTCString();
-          access.content.accessed+=1;
-          await this.setPublishedAppStats(appId,access);
-          }
-          break;
-        case skappActionType.ADD_COMMENT:
-          if( await this.checkPublishedApp(appId)){
-          let comment:IAppComments = await this.getPublishedAppComments(appId);
-          comment.ts= (new Date()).toUTCString();
-          comment.content.comments.push({timestamp:(new Date()).toUTCString(), comment:data.comment})
-          await this.setPublishedAppComments(appId,comment);
-          }
-          break;  
-      default:
-        this.log('No such Implementation');
-    }
-  }catch(error){
-    result.error=error;
-  }
-  return result;
-  }
-
-  private async checkPublishedApp(appId:string){
-    let indexData:any ={};
-    try{
-      indexData=await this.downloadFile(this.paths.PUBLISHED_INDEX_PATH);
-    }catch(error){
-      throw Error('NO Index present')
-    }
-    if(indexData.published.includes(appId)){
-      return true;
-    }
-    else{
-      return false;
-    }
-  }
-
-  private async updatePublisedIndex(appId:string){
-    let indexData:any ={};
-    try{
-      indexData=await this.downloadFile(this.paths.PUBLISHED_INDEX_PATH);
-    }catch(error){
-      indexData['published']=[]
-    }
-    if(indexData==null || indexData==undefined ||indexData.published==null ||indexData.published==undefined)
-    {indexData={}
-    indexData['published']=[]}
-    if(!indexData.published.includes(appId)){
-      indexData.published.push(appId);
-      this.mySky.setJSON(this.paths.PUBLISHED_INDEX_PATH,indexData);
-    }
-  }
-  private async updateDeployedIndex(appId:string){
-    let indexData:any ={};
-    try{
-      indexData=await this.downloadFile(this.paths.DEPLOYED_INDEX_PATH);
-    }catch(error){
-      indexData['deployed']=[]
-    }
-    if(indexData==null || indexData==undefined ||indexData.deployed==null ||indexData.deployed==undefined)
-    {indexData={}
-    indexData['deployed']=[]}
-    if(!indexData.deployed.includes(appId)){
-      indexData.deployed.push(appId);
-      this.mySky.setJSON(this.paths.DEPLOYED_INDEX_PATH,indexData);
-    }
   }
 
   public async init() {
@@ -234,195 +72,714 @@ export default class SkappDAC implements ISkappDAC {
       this.skapp = skapp;
 
       this.paths = {
-        SKAPPS_DICT_PATH: `${DATA_DOMAIN}/skapp-dict.json`,//{skapp_name:true/false}
-        PUBLISHED_INDEX_PATH: `${DATA_DOMAIN}/${skapp}/published/index.json`,
-        ///JSON Data: [appId1, AppId2....]
-        //PATH_Example: /skyapps.hns/skapp.hns/published/index.json, /skyapps.hns/anotherAppStore.hns/published/index.json..etc
-        PUBLISHED_APP_INFO_PATH:`${DATA_DOMAIN}/${skapp}/published/`,
-        PUBLISHED_APP_COMMENT_PATH: `${DATA_DOMAIN}/${skapp}/published/`,//app-comments.json
-        PUBLISHED_APP_STATS_PATH: `${DATA_DOMAIN}/${skapp}/published/`,//app-stats.json
-        DEPLOYED_INDEX_PATH: `${DATA_DOMAIN}/${skapp}/deployed/index.json`,
-        //JSON Data: [appId1, AppId2....]
-        DEPLOYED_APP_INFO_PATH: `${DATA_DOMAIN}/${skapp}/deployed/`,
-      }
+        // Deploy
+        DD_DEPLOYED_APPS_INDEX_PATH: `${DATA_DOMAIN}/deployed/index.json`, // IDeployedAppsDDIDX
+        DD_DEPLOYED_APP_PATH: `${DATA_DOMAIN}/deployed/$APP_ID/$LATEST/deploymentRecord.json`, //IDeploymentRecord
+        SD_DEPLOYED_APPS_INDEX_PATH: `${DATA_DOMAIN}/${skapp}/deployed/index.json`, // IDeployedAppsSDIDX
+        SD_DEPLOYED_APP_PATH: `${DATA_DOMAIN}/${skapp}/deployed/$APP_ID/$LATEST/deploymentRecord.json`, //IDeploymentRecord
 
+        // Publish
+        DD_PUBLISHED_APPS_INDEX_PATH: `${DATA_DOMAIN}/published/index.json`, // IPublishedAppsDDIDX
+        DD_PUBLISHED_APP_PATH: `${DATA_DOMAIN}/published/$APP_ID/$LATEST/publishedAppRecord.json`, //IPublishedAppRecord
+        SD_PUBLISHED_APPS_INDEX_PATH: `${DATA_DOMAIN}/${skapp}/published/index.json`,// IPublishedAppsSDIDX
+        SD_PUBLISHED_APP_PATH: `${DATA_DOMAIN}/${skapp}/published/$APP_ID/$LATEST/publishedAppRecord.json`,//IPublishedAppRecord
+
+        // User Interactions / stats
+        DD_PUBLISHED_APPS_STATS_INDEX_PATH: `${DATA_DOMAIN}/published/stats/index.json`, // IPublishedAppsStatsDDIDX
+        DD_PUBLISHED_APP_STATS_PATH: `${DATA_DOMAIN}/published/stats/$APP_ID/$LATEST/publishedAppStatsRecord.json`, //IPublishedAppStatsRecord
+        SD_PUBLISHED_APPS_STATS_INDEX_PATH: `${DATA_DOMAIN}/${skapp}/published/stats/index.json`, // IPublishedAppsStatsSDIDX
+        SD_PUBLISHED_APP_STATS_PATH: `${DATA_DOMAIN}/${skapp}/published/stats/$APP_ID/$LATEST/publishedAppStatsRecord.json`, //IPublishedAppStatsRecord
+
+        // Publish App : User Action -> Comments
+        // DD_PUBLISHED_APPS_COMMENTS_INDEX_PATH: `${DATA_DOMAIN}/published/comments/index.json`,// IPublishedAppsComments
+        // SD_PUBLISHED_APP_COMMENTS_INDEX_PATH: `${DATA_DOMAIN}/${skapp}/published/comments/index.json`, // ISkappPublishedAppsCommentsIndex
+        // SD_PUBLISHED_APP_COMMENTS_PATH: `${DATA_DOMAIN}/${skapp}/published/$APP_ID/comments/$LATEST/publishedAppCommentRecords.json`, //ISkappPublishedAppsComments
+      }
       // load mysky
       const opts = { dev: DEV_ENABLED }
       this.mySky = await this.client.loadMySky(DATA_DOMAIN, opts)
-
-
     } catch (error) {
       this.log('Failed to load MySky, err: ', error)
       throw error;
     }
-
-    try{
-     //this.skappDict= await this.downloadFile(this.paths.SKAPPS_DICT_PATH)
-    }catch(error){
+    try {
+      //this.skappDict= await this.downloadFile(this.paths.SKAPPS_DICT_PATH)
+    } catch (error) {
       this.log('Failed to load skappDict, err: ', error)
-      this.skappDict[this.skapp]=true;
+      this.skappDict[this.skapp] = true;
       //this.mySky.setJSON(this.paths.SKAPPS_DICT_PATH,this.skappDict);
       this.log('updated current skapp to skapp dict');
     }
   }
 
-  public async getPublishedApps(appIds: string[]): Promise<any[]> {
-    let indexData:any ={};
-    let results:any[] = [];
-    if(appIds ==null || appIds.length==0 ){
-     try {
-      indexData=await this.downloadFile(this.paths.PUBLISHED_INDEX_PATH);
-     } catch (error) {
-      throw new Error("NO PUBLISHED APP");
-     } 
-     appIds = indexData.published;
-    }
-    for(let appid of appIds){
-      let appData :any;
-      try{
-        appData= await this.getPublishedAppInfo(appid);
-      results.push(appData);
-      }catch(error){
-        this.log('missing json for appid :',appid);
-      }
-    }
-    return results;
-  }
-
-  public async getPublishedAppsCount(appIds: string[]): Promise<any> {
-    let indexData:any ={};
-    //let results:any[] = [];
-    if(appIds ==null || appIds.length==0 ){
-     try {
-      indexData=await this.downloadFile(this.paths.PUBLISHED_INDEX_PATH);
-     } catch (error) {
-      throw new Error("NO PUBLISHED APP");
-     } 
-     appIds = indexData.published;
-    }
-    
-    return appIds.length;
-  }
-
-  public async getSkappsInfo(appIds: string[]): Promise<any[]> {
-    let indexData:any ={};
-    let results:any[] = [];
-    if(appIds ==null || appIds.length==0 ){
-     try {
-      indexData=await this.downloadFile(this.paths.PUBLISHED_INDEX_PATH);
-     } catch (error) {
-      throw new Error("NO PUBLISHED APP");
-     } 
-     appIds = indexData.published;
-    }
-    for(let appid of appIds){
-      let appMaster:any={};
-      let appData :any;
-      let appStats :any;
-      let appComments :any;
-      try{
-        appData= await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appid+'/'+'appInfo.json');
-        appStats= await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appid+'/'+'appStats.json');
-        appComments= await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appid+'/'+'appComments.json');
-        appMaster={
-          appdata:appData,
-          appstats: appStats,
-          appcomments: appComments
-        }
-        results.push(appMaster);
-      }catch(error){
-        this.log('missing json for appid :',appid);
-      }
-    }
-    return results;
-  }
-  public async getSkappStats(appId: string): Promise<any> {
-    let appData :any;
-    try{
-      appData= await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appStats.json');
-    
-    }catch(error){
-      this.log('missing json for appid :',appId);
-      throw new Error("missing json for appid :"+appId);
-    }
-    return appData;
-  }
-  public async getSkappComments(appId: string): Promise<any> {
-    let appData :any;
-    try{
-      appData= await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appComments.json');
-    }catch(error){
-      this.log('missing json for appid :',appId);
-      throw new Error("missing json for appid :"+appId);
-    }
-    return appData;
-  }
-  public async getDeployedApps(appIds: string[]): Promise<any[]> {
-    let indexData:any ={};
-    let results:IDeployedApp[] = [];
-    if(appIds ==null || appIds.length==0 ){
-     try {
-      indexData=await this.downloadFile(this.paths.DEPLOYED_INDEX_PATH);
-     } catch (error) {
-      throw new Error("NO DEPLOYED APP");
-     } 
-     appIds = indexData.deployed;
-    }
-    for(let appid of appIds){
-      let appData :any;
-      try{
-        appData= await this.getDeployedAppInfo(appid);
-      results.push(appData);
-      }catch(error){
-        this.log('missing json for appid :',appid);
-      }
-    }
-    return results;
-  }
-  private async getPublishedAppInfo(appId:string):Promise<any>{
-    return await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appInfo.json');
-  }
-  private async getPublishedAppStats(appId:string):Promise<any>{
-    return (await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appStats.json'));
-  }
-  private async setPublishedAppStats(appId:string,data:any){
-    return await this.mySky.setJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appStats.json',data);
-  }
-  private async getPublishedAppComments(appId:string):Promise<any>{
-    return await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appComments.json');
-  }
-  private async setPublishedAppComments(appId:string,data:any){
-    return await this.mySky.setJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appComments.json',data);
-  }
-  private async setPublishedAppInfo(appId:string, appData:any){
-    return await this.mySky.setJSON(this.paths.PUBLISHED_APP_INFO_PATH+appId+'/'+'appInfo.json',appData);
-  }
-  private async getDeployedAppInfo(appId:string){
-    return await this.downloadFile(this.paths.DEPLOYED_APP_INFO_PATH+appId+'/'+'appInfo.json');
-  }
-  private async setDeployedAppInfo(appId:string, appData:any){
-    return await this.mySky.setJSON(this.paths.DEPLOYED_APP_INFO_PATH+appId+'/'+'appInfo.json',appData);
-  }
   // onUserLogin is called by MySky when the user has logged in successfully
   public async onUserLogin() {
-    // Register the skapp name in the dictionary
-    
+    this.log(`>>>>>>>> SKAPP DAC : VRESION : ${DAC_VERSION} <<<<<<<<<<<<<<<<`)
+    const promises = []
+    promises.push(this.ensureDDDeployedAppsIndexPresent()
+      .then(() => { this.log(`Successfully ensured ${this.paths.DD_DEPLOYED_APPS_INDEX_PATH} present`) })
+      .catch(err => { this.log('Failed to ensure Deployment DataDomain index.json, err: ', err) })
+    )
+    promises.push(this.ensureSDDeployedAppsIndexPresent()
+      .then(() => { this.log(`Successfully ensured ${this.paths.SD_DEPLOYED_APPS_INDEX_PATH} present`) })
+      .catch(err => { this.log('Failed to ensure Deployment SkappDomain index.json, err: ', err) }))
+
+    promises.push(this.ensureDDPublishedAppsIndexPresent()
+      .then(() => { this.log(`Successfully ensured ${this.paths.DD_PUBLISHED_APPS_INDEX_PATH} present`) })
+      .catch(err => { this.log('Failed to ensure PublishedApp DataDomain index.json, err: ', err) })
+    )
+    promises.push(this.ensureSDPublishedAppsIndexPresent()
+      .then(() => { this.log(`Successfully ensured ${this.paths.SD_PUBLISHED_APPS_INDEX_PATH} present`) })
+      .catch(err => { this.log('Failed to ensure PublishedApp SkappDomain index.json, err: ', err) }))
+
+    promises.push(this.ensureDDPublishedAppsStatsIndexPresent()
+      .then(() => { this.log(`Successfully ensured ${this.paths.DD_PUBLISHED_APPS_STATS_INDEX_PATH} present`) })
+      .catch(err => { this.log('Failed to ensure PublishedAppStats DataDomain index.json, err: ', err) })
+    )
+    promises.push(this.ensureSDPublishedAppsStatsIndexPresent()
+      .then(() => { this.log(`Successfully ensured ${this.paths.SD_PUBLISHED_APPS_STATS_INDEX_PATH} present`) })
+      .catch(err => { this.log('Failed to ensure PublishedAppStats SkappDomain index.json, err: ', err) }))
+    Promise.all(promises).then(() => { this.fileHierarchyEnsured = true })
   }
-
-
-  // registerSkappName is called on init and ensures this skapp name is
-  // registered in the skapp name dictionary.
-  private async registerSkappName() {
-    const { SKAPPS_DICT_PATH } = this.paths;
-    let skapps = await this.downloadFile<IDictionary>(SKAPPS_DICT_PATH);
-    if (!skapps) {
-      skapps = {};
+  private async ensureDDDeployedAppsIndexPresent(): Promise<void> {
+    const { DD_DEPLOYED_APPS_INDEX_PATH: path } = this.paths;
+    const index = await this.downloadFile<IDeployedAppsDDIDX>(path);
+    if (!index) {
+      await this.updateFile(path, DEFAULT_DD_DEPLOYED_APPS_INDEX) // default index
     }
-    skapps[this.skapp] = true;
-    await this.updateFile(SKAPPS_DICT_PATH, skapps);
+  }
+  private async ensureSDDeployedAppsIndexPresent(): Promise<void> {
+    const { SD_DEPLOYED_APPS_INDEX_PATH: path } = this.paths;
+    const index = await this.downloadFile<IDeployedAppsSDIDX>(path);
+    if (!index) {
+      await this.updateFile(path, DEFAULT_SD_DEPLOYED_APPS_INDEX) // default index
+    }
+  }
+  private async ensureDDPublishedAppsIndexPresent(): Promise<void> {
+    const { DD_PUBLISHED_APPS_INDEX_PATH: path } = this.paths;
+    const index = await this.downloadFile<IPublishedAppsDDIDX>(path);
+    if (!index) {
+      await this.updateFile(path, DEFAULT_DD_PUBLISHED_APPS_INDEX) // default index
+    }
+  }
+  private async ensureSDPublishedAppsIndexPresent(): Promise<void> {
+    const { SD_PUBLISHED_APPS_INDEX_PATH: path } = this.paths;
+    const index = await this.downloadFile<IPublishedAppsSDIDX>(path);
+    if (!index) {
+      await this.updateFile(path, DEFAULT_SD_PUBLISHED_APPS_INDEX) // default index
+    }
+  }
+  private async ensureDDPublishedAppsStatsIndexPresent(): Promise<void> {
+    const { DD_PUBLISHED_APPS_STATS_INDEX_PATH: path } = this.paths;
+    const index = await this.downloadFile<IPublishedAppsDDIDX>(path);
+    if (!index) {
+      await this.updateFile(path, DEFAULT_DD_PUBLISHED_APPS_INDEX) // default index
+    }
+  }
+  private async ensureSDPublishedAppsStatsIndexPresent(): Promise<void> {
+    const { SD_PUBLISHED_APPS_STATS_INDEX_PATH: path } = this.paths;
+    const index = await this.downloadFile<IPublishedAppsSDIDX>(path);
+    if (!index) {
+      await this.updateFile(path, DEFAULT_SD_PUBLISHED_APPS_INDEX) // default index
+    }
+  }
+  // #####################################################################################
+  // ###################### Deployment Methods ###########################################
+  // #####################################################################################
+  public async setDeployment(data: IDeploymentRecord): Promise<IDACResponse> {
+    if (!await this.waitUntilFilesArePresent()) {
+      return this.fail('Could not initialize Deployment Files, initialization timeout');
+    }
+    let result: IDACResponse = { submitted: false, };
+    // TODO: Add "Validation" call here
+    let promises: any = []
+    const timestamp: number = (new Date()).valueOf();
+    const { DD_DEPLOYED_APPS_INDEX_PATH, DD_DEPLOYED_APP_PATH, SD_DEPLOYED_APPS_INDEX_PATH, SD_DEPLOYED_APP_PATH } = this.paths;
+    const DD_DEPLOYED_APP_PATH_UPDATED = DD_DEPLOYED_APP_PATH.replace("$APP_ID", data.appId);
+    const SD_DEPLOYED_APP_PATH_UPDATED = SD_DEPLOYED_APP_PATH.replace("$APP_ID", data.appId);
+    this.log(' DD_DEPLOYED_APP_PATH_UPDATED : ', DD_DEPLOYED_APP_PATH_UPDATED);
+    this.log(' SD_DEPLOYED_APP_PATH_UPDATED : ', SD_DEPLOYED_APP_PATH_UPDATED);
+
+    try {
+
+      // ####### Step 1: Read DataDomain and SkappDomain Indexes and update Index variable, dont write yet. Index File write will be in last step
+
+      let ddDeployedAppsIndex: IDeployedAppsDDIDX | null = null;// at Data Domain Level
+      let sdDeployedAppsIndex: IDeployedAppsSDIDX | null = null;// at Skapp Domain Level
+      let ddCounter: number = 0;
+      let sdCounter: number = 0;
+      let deployedAppRecordDataLink: string | null = null;
+      try {
+        let promises: any = [];
+        promises.push(this.downloadFile<IDeployedAppsDDIDX>(DD_DEPLOYED_APPS_INDEX_PATH));
+        promises.push(this.downloadFile<IDeployedAppsSDIDX>(SD_DEPLOYED_APPS_INDEX_PATH))
+        const promiseResult = await Promise.all<IDeployedAppsDDIDX, IDeployedAppsSDIDX>(promises);
+        ddDeployedAppsIndex = promiseResult[0];
+        sdDeployedAppsIndex = promiseResult[1];
+        if (ddDeployedAppsIndex == undefined || ddDeployedAppsIndex == null) {
+          result.error = `Error Downloading DataDomain Index File`;
+          return result;
+        }
+        if (sdDeployedAppsIndex == undefined || sdDeployedAppsIndex == null) {
+          result.error = `Error Downloading SkappDomain Index File`;
+          return result;
+        }
+      } catch (error) {
+        result.error = `Error Downloading DataDomain and/or SkappDomain Index File`;
+        return result;
+      }
+
+      // --> DataDomain Index File
+      if (ddDeployedAppsIndex.appsIndex == null) {// first time deploying
+        const deployedAppsDDIDXRecord: IDeployedAppsDDIDXRecord = {
+          appId: data.appId,
+          ddCounter: 0,
+          latestDataLink: "",// value will be set here later on.
+          lastUpdatedBy: this.skapp,
+          skapps: [this.skapp]
+        }
+        ddDeployedAppsIndex.appsIndex = {
+          [data.appId]: deployedAppsDDIDXRecord
+        }
+      }
+      else {//Not FirstTime 
+        const ddAppIds = Object.keys(ddDeployedAppsIndex.appsIndex);
+        if (!ddAppIds.includes(data.appId)) {// "New App" Deployment !
+          const deployedAppsDDIDXRecord: IDeployedAppsDDIDXRecord = {
+            appId: data.appId,
+            ddCounter: 0,
+            latestDataLink: "",// value will be set here later on.
+            lastUpdatedBy: this.skapp,
+            skapps: [this.skapp]
+          }
+          ddDeployedAppsIndex.appsIndex[data.appId] = deployedAppsDDIDXRecord;
+        }
+        else {// "Existing App" Deployment !
+          ddCounter = ddDeployedAppsIndex.appsIndex[data.appId].ddCounter + 1;
+          ddDeployedAppsIndex.appsIndex[data.appId].ddCounter = ddCounter;
+          ddDeployedAppsIndex.appsIndex[data.appId].lastUpdatedBy = this.skapp;
+          if (!ddDeployedAppsIndex.appsIndex[data.appId].skapps.includes(this.skapp))
+            ddDeployedAppsIndex.appsIndex[data.appId].skapps.push(this.skapp);
+          const lastDeploymentDataLink = ddDeployedAppsIndex.appsIndex[data.appId].latestDataLink;
+          const historyPath: string = DD_DEPLOYED_APP_PATH_UPDATED.replace("$LATEST", ddCounter.toString());
+          // set Entry with (lastDeploymentDataLink)
+          await this.setDataLink(historyPath, lastDeploymentDataLink);
+        }
+      }
+
+      // --> SkappDomain Index File
+      if (sdDeployedAppsIndex.appsIndex == null) {//first time
+        // first time deploying
+        const deployedAppsSDIDXRecord: IDeployedAppsSDIDXRecord = {
+          appId: data.appId,
+          sdCounter: 0,
+          latestDataLink: "",// value will be set here later on.
+        }
+        sdDeployedAppsIndex.appsIndex = {
+          [data.appId]: deployedAppsSDIDXRecord
+        }
+      }
+      else {//Not FirstTime 
+        const sdAppIds = Object.keys(sdDeployedAppsIndex.appsIndex);
+        if (!sdAppIds.includes(data.appId)) {// "New App" Deployment !
+          const deployedAppsSDIDXRecord: IDeployedAppsSDIDXRecord = {
+            appId: data.appId,
+            sdCounter: 0,
+            latestDataLink: "",// value will be set here later on.
+          }
+          sdDeployedAppsIndex.appsIndex[data.appId] = deployedAppsSDIDXRecord;
+        }
+        else {// "Existing App" Deployment !
+          sdCounter = sdDeployedAppsIndex.appsIndex[data.appId].sdCounter + 1;
+          sdDeployedAppsIndex.appsIndex[data.appId].sdCounter = sdCounter;
+          const lastDeploymentDataLink = sdDeployedAppsIndex.appsIndex[data.appId].latestDataLink;
+          const historyPath: string = SD_DEPLOYED_APP_PATH_UPDATED.replace("$LATEST", sdCounter.toString());
+          // set Entry with (lastDeploymentDataLink)
+          await this.setDataLink(historyPath, lastDeploymentDataLink);
+        }
+      }
+
+      // ####### Step 2: Actual Data Write
+
+      // update DeploymentRecord and update File
+      data.ddCounter = ddCounter;
+      data.timestamp = timestamp;
+      const sdUpdateFileResult = await this.updateFile(SD_DEPLOYED_APP_PATH_UPDATED, data);
+      deployedAppRecordDataLink = sdUpdateFileResult.dataLink ?? "";
+      // update DD $Latest pointer to new dataLink
+      if (deployedAppRecordDataLink != "") // this is to avoid pointing to incorrect deployment
+      {
+        await this.setDataLink(DD_DEPLOYED_APP_PATH_UPDATED, deployedAppRecordDataLink) // this REG-Write can be eliminated in specific senarios if we get SkylinkV2 to SkyLinkV2 resolution in sdk. 
+      }
+
+      // ####### Step 3: update IndexRecord objects and update DD & SD index files
+
+      ddDeployedAppsIndex.appsIndex[data.appId].latestDataLink = deployedAppRecordDataLink;
+      sdDeployedAppsIndex.appsIndex[data.appId].latestDataLink = deployedAppRecordDataLink;
+      await this.updateFile(DD_DEPLOYED_APPS_INDEX_PATH, ddDeployedAppsIndex);
+      await this.updateFile(SD_DEPLOYED_APPS_INDEX_PATH, sdDeployedAppsIndex);
+      result.submitted = true;
+    } catch (error) {
+      result.error = error;
+    }
+    return result;
   }
 
+  // If null will return all deployments
+  public async getDeployments(appIds?: string[]): Promise<any> {
+    let response: any = { status: "failure", result: null, error: null };
+    let deployedApps: any = null;
+    const { DD_DEPLOYED_APP_PATH, DD_DEPLOYED_APPS_INDEX_PATH } = this.paths;
+    try {
+      if (appIds)// If appIds are provided
+      {
+        const promises: Promise<IDeploymentRecord | null>[] = appIds.map((appId) => {
+          const DD_DEPLOYED_APP_PATH_UPDATED = DD_DEPLOYED_APP_PATH.replace("$APP_ID", appId);
+          return this.downloadFile(DD_DEPLOYED_APP_PATH_UPDATED);
+        })
+        deployedApps = await Promise.all(promises);
 
+      }
+      else// If No AppIds are provided, then fetch all apps deployment record
+      {
+        // step1: read DD Index File
+        const deployedAppsIndex: IDeployedAppsDDIDX | null = await this.downloadFile(DD_DEPLOYED_APPS_INDEX_PATH);
+        if (deployedAppsIndex != null && deployedAppsIndex.appsIndex != null) {
+          const appIds: string[] = Object.keys(deployedAppsIndex.appsIndex);
+          const promises: Promise<IDeploymentRecord | null>[] = appIds.map((appId) => {
+            const DD_DEPLOYED_APP_PATH_UPDATED = DD_DEPLOYED_APP_PATH.replace("$APP_ID", appId);
+            return this.downloadFile(DD_DEPLOYED_APP_PATH_UPDATED);
+          })
+          deployedApps = await Promise.all(promises);
+        }
+      }
+      return deployedApps;
+    } catch (error) {
+      this.log('Error in getDeployments :', error);
+      response.error = `Error fetching deployment data, error : ${error}`;
+    }
+    return response;
+  }
+
+  // #####################################################################################
+  // ###################### PublishApp Methods ###########################################
+  // #####################################################################################
+
+  public async setPublishedApp(data: IPublishedAppRecord): Promise<IDACResponse> {
+    if (!await this.waitUntilFilesArePresent()) {
+      return this.fail('Could not initialize PublishedApp Files, initialization timeout');
+    }
+    let result: IDACResponse = { submitted: false, };
+    // TODO: Add "Validation" call here
+    let promises: any = []
+    const timestamp: number = (new Date()).valueOf();
+    const { DD_PUBLISHED_APPS_INDEX_PATH, DD_PUBLISHED_APP_PATH, SD_PUBLISHED_APPS_INDEX_PATH, SD_PUBLISHED_APP_PATH } = this.paths;
+    const DD_PUBLISHED_APP_PATH_UPDATED = DD_PUBLISHED_APP_PATH.replace("$APP_ID", data.appId);
+    const SD_PUBLISHED_APP_PATH_UPDATED = SD_PUBLISHED_APP_PATH.replace("$APP_ID", data.appId);
+    this.log(' DD_PUBLISHED_APP_PATH_UPDATED : ', DD_PUBLISHED_APP_PATH_UPDATED);
+    this.log(' SD_PUBLISHED_APP_PATH_UPDATED : ', SD_PUBLISHED_APP_PATH_UPDATED);
+
+    try {
+
+      // ####### Step 1: Read DataDomain and SkappDomain Indexes and update Index variable, dont write yet. Index File write will be in last step
+
+      let ddPublishedAppsIndex: IPublishedAppsDDIDX | null = null;// at Data Domain Level
+      let sdPublishedAppsIndex: IPublishedAppsSDIDX | null = null;// at Skapp Domain Level
+      let ddCounter: number = 0;
+      let sdCounter: number = 0;
+      let publishedAppRecordDataLink: string | null = null;
+      try {
+        let promises: any = [];
+        promises.push(this.downloadFile<IPublishedAppsDDIDX>(DD_PUBLISHED_APPS_INDEX_PATH));
+        promises.push(this.downloadFile<IPublishedAppsSDIDX>(SD_PUBLISHED_APPS_INDEX_PATH))
+        const promiseResult = await Promise.all<IPublishedAppsDDIDX, IPublishedAppsSDIDX>(promises);
+        ddPublishedAppsIndex = promiseResult[0];
+        sdPublishedAppsIndex = promiseResult[1];
+        if (ddPublishedAppsIndex == undefined || ddPublishedAppsIndex == null) {
+          result.error = `Error Downloading DataDomain Index File`;
+          return result;
+        }
+        if (sdPublishedAppsIndex == undefined || sdPublishedAppsIndex == null) {
+          result.error = `Error Downloading SkappDomain Index File`;
+          return result;
+        }
+      } catch (error) {
+        result.error = `Error Downloading DataDomain and/or SkappDomain Index File`;
+        return result;
+      }
+
+      // --> DataDomain Index File
+      if (ddPublishedAppsIndex.appsIndex == null) {// first time deploying
+        const publishedAppsDDIDXRecord: IPublishedAppsDDIDXRecord = {
+          appId: data.appId,
+          ddCounter: 0,
+          latestDataLink: "",// value will be set here later on.
+          lastUpdatedBy: this.skapp,
+          skapps: [this.skapp]
+        }
+        ddPublishedAppsIndex.appsIndex = {
+          [data.appId]: publishedAppsDDIDXRecord
+        }
+      }
+      else {//Not FirstTime 
+        const ddAppIds = Object.keys(ddPublishedAppsIndex.appsIndex);
+        if (!ddAppIds.includes(data.appId)) {// "New App" Published App !
+          const publishedAppsDDIDXRecord: IPublishedAppsDDIDXRecord = {
+            appId: data.appId,
+            ddCounter: 0,
+            latestDataLink: "",// value will be set here later on.
+            lastUpdatedBy: this.skapp,
+            skapps: [this.skapp]
+          }
+          ddPublishedAppsIndex.appsIndex[data.appId] = publishedAppsDDIDXRecord;
+        }
+        else {// "Existing App" Published App !
+          ddCounter = ddPublishedAppsIndex.appsIndex[data.appId].ddCounter + 1;
+          ddPublishedAppsIndex.appsIndex[data.appId].ddCounter = ddCounter;
+          ddPublishedAppsIndex.appsIndex[data.appId].lastUpdatedBy = this.skapp;
+          if (!ddPublishedAppsIndex.appsIndex[data.appId].skapps.includes(this.skapp))
+            ddPublishedAppsIndex.appsIndex[data.appId].skapps.push(this.skapp);
+          const lastPublishedAppDataLink = ddPublishedAppsIndex.appsIndex[data.appId].latestDataLink;
+          const historyPath: string = DD_PUBLISHED_APP_PATH_UPDATED.replace("$LATEST", ddCounter.toString());
+          // set Entry with (lastPublishedAppDataLink)
+          await this.setDataLink(historyPath, lastPublishedAppDataLink);
+        }
+      }
+
+      // --> SkappDomain Index File
+      if (sdPublishedAppsIndex.appsIndex == null) {//first time
+        // first time deploying
+        const publishedAppsSDIDXRecord: IPublishedAppsSDIDXRecord = {
+          appId: data.appId,
+          sdCounter: 0,
+          latestDataLink: "",// value will be set here later on.
+        }
+        sdPublishedAppsIndex.appsIndex = {
+          [data.appId]: publishedAppsSDIDXRecord
+        }
+      }
+      else {//Not FirstTime 
+        const sdAppIds = Object.keys(sdPublishedAppsIndex.appsIndex);
+        if (!sdAppIds.includes(data.appId)) {// "New App" PublishedApp !
+          const publishedAppsSDIDXRecord: IPublishedAppsSDIDXRecord = {
+            appId: data.appId,
+            sdCounter: 0,
+            latestDataLink: "",// value will be set here later on.
+          }
+          sdPublishedAppsIndex.appsIndex[data.appId] = publishedAppsSDIDXRecord;
+        }
+        else {// "Existing App" PublishedApp !
+          sdCounter = sdPublishedAppsIndex.appsIndex[data.appId].sdCounter + 1;
+          sdPublishedAppsIndex.appsIndex[data.appId].sdCounter = sdCounter;
+          const lastPublishedAppDataLink = sdPublishedAppsIndex.appsIndex[data.appId].latestDataLink;
+          const historyPath: string = SD_PUBLISHED_APP_PATH_UPDATED.replace("$LATEST", sdCounter.toString());
+          // set Entry with (lastPublishedAppDataLink)
+          await this.setDataLink(historyPath, lastPublishedAppDataLink);
+        }
+      }
+
+      // ####### Step 2: Actual Data Write
+
+      // update PublishedAppRecord and update File
+      data.ddCounter = ddCounter;
+      data.timestamp = timestamp;
+      const sdUpdateFileResult = await this.updateFile(SD_PUBLISHED_APP_PATH_UPDATED, data);
+      publishedAppRecordDataLink = sdUpdateFileResult.dataLink ?? "";
+      // update DD $Latest pointer to new dataLink
+      if (publishedAppRecordDataLink != "") // this is to avoid pointing to incorrect publishedApp
+      {
+        await this.setDataLink(DD_PUBLISHED_APP_PATH_UPDATED, publishedAppRecordDataLink) // this REG-Write can be eliminated in specific senarios if we get SkylinkV2 to SkyLinkV2 resolution in sdk. 
+      }
+
+      // ####### Step 3: update IndexRecord objects and update DD & SD index files
+
+      ddPublishedAppsIndex.appsIndex[data.appId].latestDataLink = publishedAppRecordDataLink;
+      sdPublishedAppsIndex.appsIndex[data.appId].latestDataLink = publishedAppRecordDataLink;
+      await this.updateFile(DD_PUBLISHED_APPS_INDEX_PATH, ddPublishedAppsIndex);
+      await this.updateFile(SD_PUBLISHED_APPS_INDEX_PATH, sdPublishedAppsIndex);
+      result.submitted = true;
+    } catch (error) {
+      result.error = error;
+    }
+    return result;
+  }
+
+  public async getPublishedApps(appIds?: string[], userId?: string): Promise<any> {
+    let response: any = { status: "failure", result: null, error: null };
+    let publishedApps: any = null;
+    const { DD_PUBLISHED_APP_PATH, DD_PUBLISHED_APPS_INDEX_PATH } = this.paths;
+    try {
+      if (appIds)// If appIds are provided
+      {
+        const promises: Promise<IDeploymentRecord | null>[] = appIds.map((appId) => {
+          const DD_PUBLISHED_APP_PATH_UPDATED = DD_PUBLISHED_APP_PATH.replace("$APP_ID", appId);
+          return this.downloadFile(DD_PUBLISHED_APP_PATH_UPDATED);
+        })
+        publishedApps = await Promise.all(promises);
+
+      }
+      else// If No AppIds are provided, then fetch all apps deployment record
+      {
+        // step1: read DD Index File
+        const publishedAppsIndex: IPublishedAppsDDIDX | null = await this.downloadFile(DD_PUBLISHED_APPS_INDEX_PATH);
+        if (publishedAppsIndex != null && publishedAppsIndex.appsIndex != null) {
+          const appIds: string[] = Object.keys(publishedAppsIndex.appsIndex);
+          const promises: Promise<IDeploymentRecord | null>[] = appIds.map((appId) => {
+            const DD_PUBLISHED_APP_PATH_UPDATED = DD_PUBLISHED_APP_PATH.replace("$APP_ID", appId);
+            return this.downloadFile(DD_PUBLISHED_APP_PATH_UPDATED);
+          })
+          publishedApps = await Promise.all(promises);
+        }
+      }
+      return publishedApps;
+    } catch (error) {
+      this.log('Error in getPublishedApps :', error);
+      response.error = `Error fetching Published Apps data, error : ${error}`;
+    }
+    return response;
+  }
+  public async getPublishedAppIds(userId?: string): Promise<any> {
+    // TODO: Pending Implementation
+    const { DD_PUBLISHED_APPS_INDEX_PATH } = this.paths;
+    const publishedAppsIndex: IPublishedAppsDDIDX | null = await this.downloadFile(DD_PUBLISHED_APPS_INDEX_PATH);
+    if (publishedAppsIndex != null && publishedAppsIndex.appsIndex != null) {
+      const appIds: string[] = Object.keys(publishedAppsIndex.appsIndex);
+      return appIds;
+    }
+    return null;
+  }
+  // #####################################################################################
+  // ###################### PublishApp Stats / Interactions Methods ######################
+  // #####################################################################################
+
+  public async skappAction(action: skappActionType, appId: string, data: any): Promise<IDACResponse> {
+    if (!await this.waitUntilFilesArePresent()) {
+      return this.fail('Could not initialize PublishedApp Stats Files, initialization timeout');
+    }
+    let result: IDACResponse = { submitted: false, };
+    // TODO: Add "Validation" call here
+    let promises: any = []
+    const timestamp: number = (new Date()).valueOf();
+    const { DD_PUBLISHED_APPS_STATS_INDEX_PATH, SD_PUBLISHED_APPS_STATS_INDEX_PATH } = this.paths;
+    try {
+      // ####### Step 1: Read DataDomain and SkappDomain Indexes and update Index variable, dont write yet. Index File write will be in last step
+      let ddPublishedAppsStatsIndex: IPublishedAppsStatsDDIDX | null = null;// at Data Domain Level
+      let sdPublishedAppsStatsIndex: IPublishedAppsStatsSDIDX | null = null;// at Skapp Domain Level
+      let ddCounter: number = 0;
+      let sdCounter: number = 0;
+      try {
+        let promises: any = [];
+        promises.push(this.downloadFile<IPublishedAppsStatsDDIDX>(DD_PUBLISHED_APPS_STATS_INDEX_PATH));
+        promises.push(this.downloadFile<IPublishedAppsStatsSDIDX>(SD_PUBLISHED_APPS_STATS_INDEX_PATH))
+        const promiseResult = await Promise.all<IPublishedAppsStatsDDIDX, IPublishedAppsStatsSDIDX>(promises);
+        ddPublishedAppsStatsIndex = promiseResult[0];
+        sdPublishedAppsStatsIndex = promiseResult[1];
+        if (ddPublishedAppsStatsIndex == undefined || ddPublishedAppsStatsIndex == null) {
+          result.error = `Error Downloading DataDomain Index File`;
+          return result;
+        }
+        if (sdPublishedAppsStatsIndex == undefined || sdPublishedAppsStatsIndex == null) {
+          result.error = `Error Downloading SkappDomain Index File`;
+          return result;
+        }
+      } catch (error) {
+        result.error = `Error Downloading DataDomain and/or SkappDomain Index File`;
+        return result;
+      }
+      // --> DataDomain Index File
+      if (ddPublishedAppsStatsIndex.appsIndex == null) {// first time 
+        const publishedAppsStatsDDIDXRecord: IPublishedAppsStatsDDIDXRecord = {
+          appId: data.appId,
+          ddCounter: 0,
+          //latestDataLink: "",// value will be set here later on.
+          publishedAppStatsRecord: null,
+          lastUpdatedBy: this.skapp,
+          skapps: [this.skapp]
+        }
+        let publishedAppStatsRecord = this.getUpdatesPublishedAppStatsRecord(action, DEFAULT_PUBLISHED_APPS_STATS_RECORD)
+        publishedAppsStatsDDIDXRecord.publishedAppStatsRecord = publishedAppStatsRecord;
+        ddPublishedAppsStatsIndex.appsIndex = {
+          [data.appId]: publishedAppsStatsDDIDXRecord
+        }
+      }
+      else {//Not FirstTime 
+        const ddAppIds = Object.keys(ddPublishedAppsStatsIndex.appsIndex);
+        if (!ddAppIds.includes(data.appId)) {// "New App" Published App !
+          const publishedAppsStatsDDIDXRecord: IPublishedAppsStatsDDIDXRecord = {
+            appId: data.appId,
+            ddCounter: 0,
+            //latestDataLink: "",// value will be set here later on.
+            publishedAppStatsRecord: null,
+            lastUpdatedBy: this.skapp,
+            skapps: [this.skapp]
+          }
+          let publishedAppStatsRecord = this.getUpdatesPublishedAppStatsRecord(action, DEFAULT_PUBLISHED_APPS_STATS_RECORD)
+          publishedAppsStatsDDIDXRecord.publishedAppStatsRecord = publishedAppStatsRecord;
+          ddPublishedAppsStatsIndex.appsIndex[data.appId] = publishedAppsStatsDDIDXRecord;
+        }
+        else {// "Existing App" Published App !
+          ddCounter = ddPublishedAppsStatsIndex.appsIndex[data.appId].ddCounter + 1;
+          ddPublishedAppsStatsIndex.appsIndex[data.appId].ddCounter = ddCounter;
+          ddPublishedAppsStatsIndex.appsIndex[data.appId].lastUpdatedBy = this.skapp;
+          if (!ddPublishedAppsStatsIndex.appsIndex[data.appId].skapps.includes(this.skapp))
+            ddPublishedAppsStatsIndex.appsIndex[data.appId].skapps.push(this.skapp);
+          let publishedAppStatsRecord = this.getUpdatesPublishedAppStatsRecord(action, ddPublishedAppsStatsIndex.appsIndex[data.appId].publishedAppStatsRecord!)
+          ddPublishedAppsStatsIndex.appsIndex[data.appId].publishedAppStatsRecord = publishedAppStatsRecord;
+        }
+      }
+      // --> SkappDomain Index File
+      if (sdPublishedAppsStatsIndex.appsIndex == null) {//first time
+        // first time deploying
+        const publishedAppsStatsSDIDXRecord: IPublishedAppsStatsSDIDXRecord = {
+          appId: data.appId,
+          sdCounter: 0,
+          //latestDataLink: "",// value will be set here later on.
+          publishedAppStatsRecord: DEFAULT_PUBLISHED_APPS_STATS_RECORD,
+        }
+        let publishedAppStatsRecord = this.getUpdatesPublishedAppStatsRecord(action, DEFAULT_PUBLISHED_APPS_STATS_RECORD)
+        publishedAppsStatsSDIDXRecord.publishedAppStatsRecord = publishedAppStatsRecord;
+        sdPublishedAppsStatsIndex.appsIndex = {
+          [data.appId]: publishedAppsStatsSDIDXRecord
+        }
+      }
+      else {//Not FirstTime 
+        const sdAppIds = Object.keys(sdPublishedAppsStatsIndex.appsIndex);
+        if (!sdAppIds.includes(data.appId)) {// "New App" PublishedApp !
+          const publishedAppsStatsSDIDXRecord: IPublishedAppsStatsSDIDXRecord = {
+            appId: data.appId,
+            sdCounter: 0,
+            //latestDataLink: "",// value will be set here later on.
+            publishedAppStatsRecord: DEFAULT_PUBLISHED_APPS_STATS_RECORD,
+          }
+          let publishedAppStatsRecord = this.getUpdatesPublishedAppStatsRecord(action, DEFAULT_PUBLISHED_APPS_STATS_RECORD)
+          publishedAppsStatsSDIDXRecord.publishedAppStatsRecord = publishedAppStatsRecord;
+          sdPublishedAppsStatsIndex.appsIndex[data.appId] = publishedAppsStatsSDIDXRecord;
+        }
+        else {// "Existing App" PublishedApp !
+          sdCounter = sdPublishedAppsStatsIndex.appsIndex[data.appId].sdCounter + 1;
+          sdPublishedAppsStatsIndex.appsIndex[data.appId].sdCounter = sdCounter;
+          let publishedAppStatsRecord = this.getUpdatesPublishedAppStatsRecord(action, sdPublishedAppsStatsIndex.appsIndex[data.appId].publishedAppStatsRecord!)
+          sdPublishedAppsStatsIndex.appsIndex[data.appId].publishedAppStatsRecord = publishedAppStatsRecord;
+        }
+      }
+      // ####### Step 2: Actual Data Write
+      promises = [];
+      promises.push(this.updateFile(DD_PUBLISHED_APPS_STATS_INDEX_PATH, ddPublishedAppsStatsIndex));
+      promises.push(this.updateFile(SD_PUBLISHED_APPS_STATS_INDEX_PATH, sdPublishedAppsStatsIndex));
+      const promiseResult = await Promise.all<JSONResponse, JSONResponse>(promises);
+      result.submitted = true;
+    } catch (error) {
+      result.error = error;
+    }
+    return result;
+  }
+  private getUpdatesPublishedAppStatsRecord(action: skappActionType, data: IPublishedAppStatsRecord): IPublishedAppStatsRecord {
+    try {
+      switch (action) {
+        case skappActionType.LIKED:
+        case skappActionType.UNLIKED:
+          data.content.liked = action == skappActionType.LIKED ? 1 : 0;
+          break;
+        case skappActionType.FAVORITE:
+        case skappActionType.UNFAVORITE:
+          data.content.favorite = action == skappActionType.FAVORITE ? 1 : 0;
+          break;
+        case skappActionType.VIEWED:
+          data.content.viewed += 1;
+          break;
+        case skappActionType.ACCESSED:
+          data.content.accessed += 1;
+          break;
+        default:
+          this.log('No such Implementation');
+      }
+      data.timestamp = (new Date()).valueOf();
+    } catch (error) {
+      this.log(' ### Error updating IPublishedAppStatsRecord');
+    }
+    return data;
+  }
+  public async getStats(appIds?: string[], userId?: string): Promise<any> {
+    let publishedApps: any = null;
+    const { DD_PUBLISHED_APPS_STATS_INDEX_PATH } = this.paths;
+    try {
+      const publishedAppsStatsIndex: IPublishedAppsStatsDDIDX | null = await this.downloadFile(DD_PUBLISHED_APPS_STATS_INDEX_PATH);
+
+      if (publishedAppsStatsIndex != null && publishedAppsStatsIndex.appsIndex != null) {
+        let statsRecordArray = Object.values(publishedAppsStatsIndex.appsIndex);
+        if (appIds)// If appIds are provided
+        {
+          publishedApps = statsRecordArray.filter((item: IPublishedAppsStatsDDIDXRecord) => { if (appIds.includes(item.appId)) { return item.publishedAppStatsRecord; } })
+        }
+        else// If No AppIds are provided, then fetch all apps deployment record
+        {
+          publishedApps = statsRecordArray.map((item: IPublishedAppsStatsDDIDXRecord) =>  item.publishedAppStatsRecord)
+        }
+      }
+      return publishedApps;
+    } catch (error) {
+      this.log('Error in getPublishedApps :', error);
+    }
+    return publishedApps;
+  }
+  // #####################################################################################
+  // ############################ Review Below Methods ###################################
+  // #####################################################################################
+
+  // public async getPublishedAppsByUserIds(userIds: string[]): Promise<any[]> {
+  //   let results: any = [];
+  //   for (let userId of userIds) {
+  //     this.log('getPublishedAppsByUserIds : ', userId);
+  //     try {
+  //       let { data: publishedList } = await this.client.file.getJSON(userId, this.paths.PUBLISHED_INDEX_PATH);
+  //       this.log("getPublishedAppsByUserIds : " + userId + " ,publishedList " + JSON.stringify(publishedList));
+  //       if (publishedList != null && publishedList.published !== null) {
+  //         let appIdsList: any = publishedList.published;
+  //         results[userId] = appIdsList;
+  //       }
+  //       else {
+  //         results[userId] = [];
+  //       }
+  //       //results.push(publishedList);
+  //     } catch (error) {
+  //       this.log('missing json for appid :', userId);
+  //     }
+  //   }
+  //   this.log("getPublishedAppsByUserIds : consolidated : " + JSON.stringify(results));
+  //   return results;
+  // }
+  // public async getPublishedAppsCountByUserIds(userIds: string[]): Promise<any[]> {
+  //   let results: any = {};
+  //   for (let userId of userIds) {
+  //     this.log('getPublishedAppsCountByUserIds : ', userId);
+  //     try {
+  //       let { data: publishedList } = await this.client.file.getJSON(userId, this.paths.PUBLISHED_INDEX_PATH);
+  //       this.log("getPublishedAppsCountByUserIds : " + userId + " ,publishedList " + JSON.stringify(publishedList));
+  //       if (publishedList != null && publishedList.published !== null) {
+  //         let appIdsList: any = publishedList.published;
+  //         results[userId] = appIdsList.length;
+  //       }
+  //       else {
+  //         results[userId] = 0;
+  //       }
+  //       //results.push(publishedList);
+  //     } catch (error) {
+  //       this.log('missing json for appid :', userId);
+  //     }
+  //   }
+  //   this.log("getPublishedAppsCountByUserIds : consolidated : " + JSON.stringify(results));
+  //   return results;
+  // }
+  // public async getSkappComments(appId: string): Promise<any> {
+  //   let appData: any;
+  //   try {
+  //     appData = await this.downloadFile(this.paths.PUBLISHED_APP_INFO_PATH + appId + '/' + 'appComments.json');
+  //   } catch (error) {
+  //     this.log('missing json for appid :', appId);
+  //     throw new Error("missing json for appid :" + appId);
+  //   }
+  //   return appData;
+  // }
   // downloadFile merely wraps getJSON but is typed in a way that avoids
   // repeating the awkward "as unknown as T" everywhere
   private async downloadFile<T>(path: string): Promise<T | null> {
@@ -435,40 +792,89 @@ export default class SkappDAC implements ISkappDAC {
     this.log('data found at path', path, data)
     return data as unknown as T
   }
-
   // updateFile merely wraps setJSON but is typed in a way that avoids repeating
   // the awkwars "as unknown as JsonData" everywhere
-  private async updateFile<T>(path: string, data: T) {
-    this.log('updating file at path', path, data)
+  private async setDataLink(path: string, dataLink: string) {
+    // TODO: add validation for dataLink
+    this.log('updating EntryData at path', path, dataLink)
+    try {
+      await this.mySky.setDataLink(path, dataLink);
+    }
+    catch (e) {
+      this.log(' Error in setDataLink ', e)
+      throw e;
+    }
+  }
+  // updateFile merely wraps setJSON but is typed in a way that avoids repeating
+  // the awkwars "as unknown as JsonData" everywhere
+  private async setEntryData(path: string, dataLink: string) {
+    // TODO: add validation for dataLink
+    this.log('updating EntryData at path', path, dataLink)
+    const paddedDataLink = `${trimUriPrefix(dataLink, uriSkynetPrefix)}==`;
+    this.log(' paddedDataLink ', paddedDataLink)
+    const entrydata: Uint8Array = base64RawUrlToUint8Array(paddedDataLink);
+    this.log(' entrydata ', JSON.stringify(entrydata))
+    try {
+      await this.mySky.setEntryData(path, entrydata, {});
+    }
+    catch (e) {
+      this.log(' Error Setting Entry Data ', e)
+      throw e;
+    }
+  }
+  // updateFile merely wraps setJSON but is typed in a way that avoids repeating
+  // the awkwars "as unknown as JsonData" everywhere
+  private async getEntryData(path: string, data: string) {
+    this.log('reading EntryData at path', path, data)
+    //let jsonString = JSON.stringify(data);
+    //let dataJSON = JSON.parse(jsonString);
+    //this.log('updating file at path(jsonString)', path, jsonString)
     await this.mySky.setJSON(path, data as unknown as JsonData)
   }
-
-
-
-  // toPersistence turns content info into a content persistence object
-  private toPersistence(data: IContentInfo): IContentPersistence {
-    const persistence = {
-      timestamp: Math.floor(Date.now() / 1000),
-      ...data,
-    }
-
-    if (persistence.metadata === undefined) {
-      persistence.metadata = {};
-    }
-    
-    // validate the given data does not exceed max size
-    const size = Buffer.from(JSON.stringify(persistence)).length
-    if (size > ENTRY_MAX_SIZE) {
-      throw new Error(`Entry exceeds max size, ${length}>${ENTRY_MAX_SIZE}`)
-    }
-
-    return persistence;
+  // updateFile merely wraps setJSON but is typed in a way that avoids repeating
+  // the awkwars "as unknown as JsonData" everywhere
+  private async updateFile<T>(path: string, data: T): Promise<JSONResponse> {
+    this.log('updating file at path', path, data)
+    //let jsonString = JSON.stringify(data);
+    //let dataJSON = JSON.parse(jsonString);
+    //this.log('updating file at path(jsonString)', path, jsonString)
+    return await this.mySky.setJSON(path, data as unknown as JsonData)
+  }
+  // // this function returns promise
+  // private async updateFile<T>(path: string, data: T): Promise<void> {
+  //   this.log('updating file at path', path, data)
+  //   await this.mySky.setJSON(path, data as unknown as JsonData)
+  // }
+  private waitUntilFilesArePresent(): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      if (this.fileHierarchyEnsured) {
+        resolve(true);
+        return;
+      }
+      const start = new Date().getTime()
+      while (true) {
+        setTimeout(() => {
+          if (this.fileHierarchyEnsured) {
+            resolve(true);
+          }
+          const elapsed = new Date().getTime() - start;
+          if (elapsed > 60000) {
+            this.log(`waitUntilFilesArePresent timed out after ${elapsed}ms`)
+            reject(false)
+          }
+        }, 100)
+      }
+    })
   }
 
   // log prints to stdout only if DEBUG_ENABLED flag is set
   private log(message: string, ...optionalContext: any[]) {
     if (DEBUG_ENABLED) {
-      console.log(message, ...optionalContext)
+      console.log("### SKAPP-DAC (DEBUG) #### " + message, ...optionalContext)
     }
+  }
+  private fail(error: string): IDACResponse {
+    this.log(error)
+    return { submitted: false, error }
   }
 }
